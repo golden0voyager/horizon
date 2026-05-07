@@ -3,7 +3,8 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, HttpUrl, Field
+import os
+from pydantic import BaseModel, HttpUrl, Field, model_validator
 
 
 class SourceType(str, Enum):
@@ -45,6 +46,14 @@ class AIProvider(str, Enum):
     GEMINI = "gemini"
     DOUBAO = "doubao"
     MINIMAX = "minimax"
+    DEEPSEEK = "deepseek"
+    MODELSCOPE = "modelscope"
+    XIAOMIMIMO = "xiaomimimo"
+    MOONSHOTAI = "moonshotai"
+    OPENROUTER = "openrouter"
+    GROQ = "groq"
+    SILICONFLOW = "siliconflow"
+    NVIDIA = "nvidia"
 
 
 class AIConfig(BaseModel):
@@ -53,6 +62,7 @@ class AIConfig(BaseModel):
     provider: AIProvider
     model: str
     base_url: Optional[str] = None
+    base_url_env: Optional[str] = None
     api_key_env: str
     temperature: float = 0.3
     max_tokens: int = 4096
@@ -61,6 +71,22 @@ class AIConfig(BaseModel):
     # Azure OpenAI specific; required when provider == AZURE
     azure_endpoint_env: Optional[str] = None
     api_version: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def override_from_env(cls, data: Any) -> Any:
+        """Allow environment variables to override JSON config."""
+        if isinstance(data, dict):
+            provider_env = os.getenv("HORIZON_AI_PROVIDER")
+            if provider_env:
+                data["provider"] = provider_env
+            model_env = os.getenv("HORIZON_AI_MODEL")
+            if model_env:
+                data["model"] = model_env
+            api_key_env = os.getenv("HORIZON_AI_API_KEY_ENV")
+            if api_key_env:
+                data["api_key_env"] = api_key_env
+        return data
 
 
 class GitHubSourceConfig(BaseModel):

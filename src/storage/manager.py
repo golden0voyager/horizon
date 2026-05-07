@@ -1,6 +1,7 @@
 """Storage manager for configuration and state persistence."""
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -26,7 +27,13 @@ class StorageManager:
             )
 
         with open(self.config_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            content = f.read()
+            # Remove // comments
+            # 1. Full line comments
+            content = re.sub(r'^\s*//.*$', '', content, flags=re.MULTILINE)
+            # 2. Inline comments (assumes // is preceded by a space and not inside a string)
+            content = re.sub(r'\s//.*$', '', content, flags=re.MULTILINE)
+            data = json.loads(content)
 
         return Config.model_validate(data)
 

@@ -1,19 +1,50 @@
 {
   "version": "1.0",
   "ai": {
-    "provider": "openai",
-    "model": "deepseek-v4-flash",
-    "base_url": "https://api.deepseek.com",
-    "api_key_env": "OPENAI_API_KEY",
+    // AI 提供商: openai, ali, anthropic, gemini, azure, doubao, minimax, deepseek, modelscope, xiaomimimo, moonshotai, openrouter, groq, siliconflow, nvidia
+    // 系统已内置各平台的官方 Base URL。如果使用自定义地址，请在 base_url 中手动指定。
+    "provider": "ali",
+    // 模型名称：请根据所选提供商填写对应的模型 ID（如 qwen-max, deepseek-chat, moonshot-v1-8k 等）
+    "model": "qwen3.5-plus-2026-02-15",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    // 如果你需要使用特殊代理，系统会优先读取 .env 中的 {PROVIDER}_BASE_URL（如 DEEPSEEK_BASE_URL）。你也可以用 base_url_env 强制指定其他变量名。
+    "base_url_env": "",
+    // 环境变量：请在 .env 中设置对应的 API Key，并在此处填入变量名（如 DEEPSEEK_API_KEY）
+    "api_key_env": "DASHSCOPE_API_KEY",
     "temperature": 0.3,
+    // 适当减小 max_tokens (这是生成长度限制) 以提高稳定性
     "max_tokens": 8192,
+    // 摘要生成的语言 (改为 ["zh"] 仅生成中文以节省 token)
     "languages": [
-      "zh",
-      "en"
+      "zh"
     ]
   },
   "sources": {
     "github": [
+      {
+        // 监控 OpenAI 官方动态
+        "type": "user_events",
+        "username": "openai",
+        "enabled": true
+      },
+      {
+        // 监控 Anthropic 官方动态
+        "type": "user_events",
+        "username": "anthropic-ai",
+        "enabled": true
+      },
+      {
+        // 监控 DeepSeek 官方动态
+        "type": "user_events",
+        "username": "deepseek-ai",
+        "enabled": true
+      },
+      {
+        // 监控月之暗面 (Moonshot AI) 官方动态
+        "type": "user_events",
+        "username": "MoonshotAI",
+        "enabled": true
+      },
       {
         "type": "user_events",
         "username": "karpathy",
@@ -29,12 +60,6 @@
         "type": "repo_releases",
         "owner": "sgl-project",
         "repo": "sglang",
-        "enabled": true
-      },
-      {
-        "type": "repo_releases",
-        "owner": "triton-lang",
-        "repo": "triton",
         "enabled": true
       }
     ],
@@ -55,12 +80,6 @@
         "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
         "enabled": true,
         "category": "github-trending"
-      },
-      {
-        "name": "LWN.net",
-        "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
-        "enabled": true,
-        "category": "linux-kernel"
       }
     ],
     "reddit": {
@@ -83,7 +102,6 @@
           "min_score": 60
         }
       ],
-      "users": [],
       "fetch_comments": 10
     },
     "telegram": {

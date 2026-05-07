@@ -13,6 +13,24 @@ from ..models import AIConfig, AIProvider
 from .tokens import record_usage
 
 
+def get_base_url(config: AIConfig, default: Optional[str] = None) -> Optional[str]:
+    """Resolve base URL from env, config, or default."""
+    if config.base_url_env:
+        env_url = os.getenv(config.base_url_env)
+        if env_url:
+            return env_url
+    if config.base_url:
+        return config.base_url
+        
+    # Fallback to provider-specific base URL from .env if defined
+    provider_env_var = f"{config.provider.name.upper()}_BASE_URL"
+    provider_env_url = os.getenv(provider_env_var)
+    if provider_env_url:
+        return provider_env_url
+        
+    return default
+
+
 class AIClient(ABC):
     """Abstract base class for AI clients."""
 
@@ -54,8 +72,9 @@ class AnthropicClient(AIClient):
             raise ValueError(f"Missing API key: {config.api_key_env}")
 
         kwargs = {"api_key": api_key}
-        if config.base_url:
-            kwargs["base_url"] = config.base_url
+        base_url = get_base_url(config)
+        if base_url:
+            kwargs["base_url"] = base_url
 
         self.client = AsyncAnthropic(**kwargs)
         self.model = config.model
@@ -116,8 +135,9 @@ class OpenAIClient(AIClient):
             raise ValueError(f"Missing API key: {config.api_key_env}")
 
         kwargs = {"api_key": api_key}
-        if config.base_url:
-            kwargs["base_url"] = config.base_url
+        base_url = get_base_url(config)
+        if base_url:
+            kwargs["base_url"] = base_url
 
         self.client = AsyncOpenAI(**kwargs)
         self.model = config.model
@@ -314,7 +334,7 @@ class MiniMaxClient(AIClient):
 
         kwargs = {
             "api_key": api_key,
-            "base_url": config.base_url or "https://api.minimax.io/v1",
+            "base_url": get_base_url(config, "https://api.minimax.io/v1"),
         }
 
         self.client = AsyncOpenAI(**kwargs)
@@ -386,7 +406,7 @@ class AliClient(AIClient):
 
         kwargs = {
             "api_key": api_key,
-            "base_url": config.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "base_url": get_base_url(config, "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         }
         self.client = AsyncOpenAI(**kwargs)
         self.model = config.model
@@ -424,6 +444,13 @@ class AliClient(AIClient):
             max_tokens=max_tokens,
             response_format={"type": "json_object"}
         )
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            record_usage(
+                self.config.provider.value,
+                input_tokens=getattr(usage, "prompt_tokens", 0),
+                output_tokens=getattr(usage, "completion_tokens", 0),
+            )
         return response.choices[0].message.content
 
 
@@ -487,6 +514,103 @@ class GeminiClient(AIClient):
         return response.text
 
 
+class DeepSeekClient(AliClient):
+    """Client for DeepSeek API."""
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        # Override the base_url set by AliClient if not explicitly provided
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://api.deepseek.com"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
+class ModelScopeClient(AliClient):
+    """Client for ModelScope API."""
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://api-inference.modelscope.cn/v1"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
+class XiaomiMiMoClient(AliClient):
+    """Client for Xiaomi MiMo API."""
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://mimo.xiaomi.com/api/v1"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
+class MoonshotClient(AliClient):
+    """Client for Moonshot AI (Kimi) API."""
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://api.moonshot.cn/v1"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
+class OpenRouterClient(AliClient):
+    """Client for OpenRouter API."""
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://openrouter.ai/api/v1"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
+class GroqClient(AliClient):
+    """Client for Groq API."""
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://api.groq.com/openai/v1"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
+class SiliconFlowClient(AliClient):
+    """Client for SiliconFlow API."""
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://api.siliconflow.cn/v1"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
+class NvidiaClient(AliClient):
+    """Client for Nvidia API."""
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://integrate.api.nvidia.com/v1"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
 def create_ai_client(config: AIConfig) -> AIClient:
     """Factory function to create appropriate AI client.
 
@@ -513,5 +637,21 @@ def create_ai_client(config: AIConfig) -> AIClient:
         return OpenAIClient(config)
     elif config.provider == AIProvider.MINIMAX:
         return MiniMaxClient(config)
+    elif config.provider == AIProvider.DEEPSEEK:
+        return DeepSeekClient(config)
+    elif config.provider == AIProvider.MODELSCOPE:
+        return ModelScopeClient(config)
+    elif config.provider == AIProvider.XIAOMIMIMO:
+        return XiaomiMiMoClient(config)
+    elif config.provider == AIProvider.MOONSHOTAI:
+        return MoonshotClient(config)
+    elif config.provider == AIProvider.OPENROUTER:
+        return OpenRouterClient(config)
+    elif config.provider == AIProvider.GROQ:
+        return GroqClient(config)
+    elif config.provider == AIProvider.SILICONFLOW:
+        return SiliconFlowClient(config)
+    elif config.provider == AIProvider.NVIDIA:
+        return NvidiaClient(config)
     else:
         raise ValueError(f"Unsupported AI provider: {config.provider}")

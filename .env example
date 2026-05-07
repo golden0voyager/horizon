@@ -7,16 +7,16 @@ AZURE_OPENAI_API_KEY=xxx
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 GOOGLE_API_KEY=xxx
 MINIMAX_API_KEY=xxx
-DASHSCOPE_API_KEY=xxx
+DASHSCOPE_API_KEY=
 
 # WebHook Url (optional for sending notifications)
-HORIZON_WEBHOOK_URL=https://xxx
+HORIZON_WEBHOOK_URL=
 
 # GitHub Token (optional but recommended for higher rate limits)
 # Without token: 60 requests/hour
 # With token: 5000 requests/hour
-GITHUB_TOKEN=ghp_xxx
+GITHUB_TOKEN=
 
 # Apify Token (required for Twitter scraping)
 # Get yours at https://console.apify.com/account/integrations
-APIFY_TOKEN=apify_api_xxx
+APIFY_TOKEN=
