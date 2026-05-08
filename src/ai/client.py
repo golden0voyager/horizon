@@ -481,37 +481,31 @@ class GeminiClient(AIClient):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
-        """Generate completion using Gemini.
-
-        Args:
-            system: System prompt
-            user: User prompt
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-
-        Returns:
-            str: Generated text
-        """
+        """Generate completion using Gemini with detailed error logging."""
         temperature = self.temperature if temperature is None else temperature
         max_tokens = self.max_tokens if max_tokens is None else max_tokens
 
-        response = await self.client.aio.models.generate_content(
-            model=self.model,
-            contents=user,
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-                response_mime_type="application/json"
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model,
+                contents=user,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
+                    response_mime_type="application/json"
+                )
             )
-        )
-        usage = getattr(response, "usage_metadata", None)
-        if usage is not None:
-            total = getattr(usage, "total_token_count", 0) or 0
-            prompt = getattr(usage, "prompt_token_count", 0) or 0
-            completion = max(0, total - prompt)
-            record_usage("gemini", input_tokens=prompt, output_tokens=completion)
-        return response.text
+            usage = getattr(response, "usage_metadata", None)
+            if usage is not None:
+                total = getattr(usage, "total_token_count", 0) or 0
+                prompt = getattr(usage, "prompt_token_count", 0) or 0
+                completion = max(0, total - prompt)
+                record_usage("gemini", input_tokens=prompt, output_tokens=completion)
+            return response.text
+        except Exception as e:
+            print(f"\n❌ Gemini API Error ({self.model}): {str(e)}")
+            raise e
 
 
 class DeepSeekClient(AliClient):
@@ -568,11 +562,50 @@ class OpenRouterClient(AliClient):
     def __init__(self, config: AIConfig):
         super().__init__(config)
         api_key = os.getenv(config.api_key_env)
+        base_url = get_base_url(config, "https://openrouter.ai/api/v1")
+        # print(f"DEBUG: Initializing OpenRouter with URL: {base_url} and Key: {api_key[:10] if api_key else 'None'}****")
         kwargs = {
             "api_key": api_key,
-            "base_url": get_base_url(config, "https://openrouter.ai/api/v1"),
+            "base_url": base_url,
+            "default_headers": {
+                "HTTP-Referer": "https://github.com/Golden0Voyager/Horizon",
+                "X-Title": "Horizon AI Aggregator",
+            }
         }
         self.client = AsyncOpenAI(**kwargs)
+        self.model = config.model
+        self.temperature = config.temperature
+        self.max_tokens = config.max_tokens
+
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """Generate completion without response_format (fixes 400 errors on some providers)."""
+        temperature = self.temperature if temperature is None else temperature
+        max_tokens = self.max_tokens if max_tokens is None else max_tokens
+
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            # 去掉 response_format，解决部分 OpenRouter 模型的兼容性问题
+        )
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            record_usage(
+                "openrouter",
+                input_tokens=getattr(usage, "prompt_tokens", 0),
+                output_tokens=getattr(usage, "completion_tokens", 0),
+            )
+        return response.choices[0].message.content
 
 
 class GroqClient(AliClient):
@@ -585,6 +618,42 @@ class GroqClient(AliClient):
             "base_url": get_base_url(config, "https://api.groq.com/openai/v1"),
         }
         self.client = AsyncOpenAI(**kwargs)
+        self.model = config.model
+        self.temperature = config.temperature
+        self.max_tokens = config.max_tokens
+
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """Generate completion without response_format for Groq with error logging."""
+        temperature = self.temperature if temperature is None else temperature
+        max_tokens = self.max_tokens if max_tokens is None else max_tokens
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                record_usage(
+                    "groq",
+                    input_tokens=getattr(usage, "prompt_tokens", 0),
+                    output_tokens=getattr(usage, "completion_tokens", 0),
+                )
+            return response.choices[0].message.content
+        except Exception as e:
+            raise e
+
 
 
 class SiliconFlowClient(AliClient):
@@ -597,6 +666,39 @@ class SiliconFlowClient(AliClient):
             "base_url": get_base_url(config, "https://api.siliconflow.cn/v1"),
         }
         self.client = AsyncOpenAI(**kwargs)
+        self.model = config.model
+        self.temperature = config.temperature
+        self.max_tokens = config.max_tokens
+
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """Generate completion without response_format for SiliconFlow."""
+        temperature = self.temperature if temperature is None else temperature
+        max_tokens = self.max_tokens if max_tokens is None else max_tokens
+
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            record_usage(
+                "siliconflow",
+                input_tokens=getattr(usage, "prompt_tokens", 0),
+                output_tokens=getattr(usage, "completion_tokens", 0),
+            )
+        return response.choices[0].message.content
+
 
 
 class NvidiaClient(AliClient):
