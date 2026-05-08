@@ -55,6 +55,42 @@ class AIProvider(str, Enum):
     SILICONFLOW = "siliconflow"
     NVIDIA = "nvidia"
 
+# Default models and API key env vars for each provider
+AI_PROVIDER_DEFAULTS = {
+    AIProvider.ALI: {
+        "model": "qwen3.5-plus-2026-02-15",
+        "api_key_env": "DASHSCOPE_API_KEY",
+    },
+    AIProvider.OPENROUTER: {
+        "model": "tencent/hy3-preview:free",
+        "api_key_env": "OPENROUTER_API_KEY",
+    },
+    AIProvider.GROQ: {
+        "model": "llama-3.1-8b-instant",
+        "api_key_env": "GROQ_API_KEY",
+    },
+    AIProvider.DEEPSEEK: {
+        "model": "deepseek-chat",
+        "api_key_env": "DEEPSEEK_API_KEY",
+    },
+    AIProvider.GEMINI: {
+        "model": "gemini-3-flash-preview",
+        "api_key_env": "GOOGLE_API_KEY",
+    },
+    AIProvider.SILICONFLOW: {
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "api_key_env": "SILICONFLOW_API_KEY",
+    },
+    AIProvider.ANTHROPIC: {
+        "model": "claude-3-5-sonnet-20241022",
+        "api_key_env": "ANTHROPIC_API_KEY",
+    },
+    AIProvider.XIAOMIMIMO: {
+        "model": "mimo-v2.5-pro",
+        "api_key_env": "XIAOMIMIMO_API_KEY",
+    }
+}
+
 
 class AIConfig(BaseModel):
     """AI client configuration."""
@@ -79,7 +115,26 @@ class AIConfig(BaseModel):
         if isinstance(data, dict):
             provider_env = os.getenv("HORIZON_AI_PROVIDER")
             if provider_env:
-                data["provider"] = provider_env
+                try:
+                    provider = AIProvider(provider_env)
+                    data["provider"] = provider
+                    
+                    # Apply smart defaults for the chosen provider if not explicitly overridden
+                    if provider in AI_PROVIDER_DEFAULTS:
+                        defaults = AI_PROVIDER_DEFAULTS[provider]
+                        
+                        # Only apply default model if not provided in env OR current data
+                        if not os.getenv("HORIZON_AI_MODEL"):
+                            data["model"] = defaults["model"]
+                            
+                        # Only apply default key env if not provided in env OR current data
+                        if not os.getenv("HORIZON_AI_API_KEY_ENV"):
+                            data["api_key_env"] = defaults["api_key_env"]
+                except ValueError:
+                    # If invalid provider string, fallback to original logic or ignore
+                    data["provider"] = provider_env
+
+            # Explicit overrides still take ultimate precedence
             model_env = os.getenv("HORIZON_AI_MODEL")
             if model_env:
                 data["model"] = model_env
