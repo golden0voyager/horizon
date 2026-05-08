@@ -50,7 +50,7 @@ jobs:
           
           # Tools
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.HORIZON_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HORIZON_WEBHOOK_URL: ${{ secrets.HORIZON_WEBHOOK_URL }}
         run: uv run horizon
 
@@ -65,7 +65,7 @@ jobs:
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
-          github_token: ${{ secrets.HORIZON_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs
           keep_files: true
           publish_branch: gh-pages
