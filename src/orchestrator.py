@@ -257,9 +257,9 @@ class HorizonOrchestrator:
                 telegram_scraper = TelegramScraper(self.config.sources.telegram, client)
                 tasks.append(self._fetch_with_progress("Telegram", telegram_scraper, since))
 
-            # Twitter
+            # Twitter (Playwright-based, manages its own HTTP lifecycle)
             if self.config.sources.twitter and self.config.sources.twitter.enabled:
-                twitter_scraper = TwitterScraper(self.config.sources.twitter, client)
+                twitter_scraper = TwitterScraper(self.config.sources.twitter)
                 tasks.append(self._fetch_with_progress("Twitter", twitter_scraper, since))
 
             # Fetch all concurrently
