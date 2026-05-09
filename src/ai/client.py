@@ -2,7 +2,7 @@
 
 import os
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI, AsyncAzureOpenAI
@@ -734,11 +734,29 @@ class ChainedAIClient(AIClient):
     When a provider fails with a retryable error (rate limit, auth/quota,
     service unavailable, or empty response), automatically falls back to
     the next provider in the chain.
+
+    Clients are created lazily so that missing API keys for downstream
+    providers do not block startup when the primary provider works.
     """
 
-    def __init__(self, configs: List[AIConfig], clients: List[AIClient]):
+    def __init__(
+        self,
+        configs: List[AIConfig],
+        clients: Optional[List[AIClient]] = None,
+        client_factory: Optional[Any] = None,
+    ):
         self.configs = configs
-        self.clients = clients
+        self._client_factory = client_factory or _create_single_client
+        self._client_cache: Dict[int, AIClient] = {}
+        # Allow tests to inject pre-built clients directly
+        if clients is not None:
+            for idx, client in enumerate(clients):
+                self._client_cache[idx] = client
+
+    def _get_client(self, index: int) -> AIClient:
+        if index not in self._client_cache:
+            self._client_cache[index] = self._client_factory(self.configs[index])
+        return self._client_cache[index]
 
     async def complete(
         self,
@@ -748,8 +766,9 @@ class ChainedAIClient(AIClient):
         max_tokens: Optional[int] = None,
     ) -> str:
         last_error: Optional[Exception] = None
-        for i, client in enumerate(self.clients):
+        for i in range(len(self.configs)):
             try:
+                client = self._get_client(i)
                 result = await client.complete(system, user, temperature, max_tokens)
                 if not result or not result.strip():
                     raise ValueError("Empty response from provider")
@@ -758,7 +777,7 @@ class ChainedAIClient(AIClient):
                 if not self._should_fallback(exc):
                     raise
                 last_error = exc
-                if i < len(self.clients) - 1:
+                if i < len(self.configs) - 1:
                     rich_print(
                         f"\n[yellow]Provider {self.configs[i].provider.value} failed ({exc}), "
                         f"falling back to {self.configs[i + 1].provider.value}...[/yellow]"
@@ -849,8 +868,7 @@ def _create_chained_client(config: AIConfig) -> ChainedAIClient:
         )
         chain_configs.append(cfg)
 
-    clients = [_create_single_client(cfg) for cfg in chain_configs]
-    return ChainedAIClient(chain_configs, clients)
+    return ChainedAIClient(chain_configs)
 
 
 def create_ai_client(config: AIConfig) -> AIClient:
