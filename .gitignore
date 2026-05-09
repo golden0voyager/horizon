@@ -40,6 +40,7 @@ ENV/
 data/seen.json
 data/summaries/*.md
 data/subscribers.json
+data/x_cookies_*.json
 
 docs/_posts/*.md
 
