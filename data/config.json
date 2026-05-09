@@ -103,6 +103,30 @@
           "time_filter": "day",
           "fetch_limit": 15,
           "min_score": 60
+        },
+        {
+          "subreddit": "artificial",
+          "enabled": true,
+          "sort": "hot",
+          "time_filter": "day",
+          "fetch_limit": 15,
+          "min_score": 50
+        },
+        {
+          "subreddit": "OpenAI",
+          "enabled": true,
+          "sort": "hot",
+          "time_filter": "day",
+          "fetch_limit": 10,
+          "min_score": 30
+        },
+        {
+          "subreddit": "ClaudeAI",
+          "enabled": true,
+          "sort": "hot",
+          "time_filter": "day",
+          "fetch_limit": 10,
+          "min_score": 20
         }
       ],
       "fetch_comments": 10,
@@ -124,7 +148,30 @@
       "enabled": true,
       "users": [
         "karpathy",
-        "roifex"
+        "sama",
+        "ylecun",
+        "demishassabis",
+        "DarioAmodei",
+        "drfeifei",
+        "ilyasut",
+        "AndrewYNg",
+        "DrJimFan",
+        "lilianweng",
+        "jasonwei",
+        "fchollet",
+        "OpenAI",
+        "AnthropicAI",
+        "GoogleDeepMind",
+        "xAI",
+        "deepseek_ai",
+        "nvidia",
+        "huggingface",
+        "cursor_ai",
+        "dotey",
+        "op7418",
+        "rowancheung",
+        "techreview",
+        "theinformation"
       ],
       "fetch_limit": 10,
       "fetch_reply_text": false,
