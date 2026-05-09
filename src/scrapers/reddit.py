@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
+import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 
 import httpx
@@ -35,6 +36,48 @@ class RedditScraper(BaseScraper):
         super().__init__(config.model_dump(), http_client)
         self.reddit_config = config
         self._comment_semaphore = asyncio.Semaphore(MAX_COMMENT_CONCURRENCY)
+        self._oauth_token: Optional[str] = None
+        self._oauth_expires: Optional[datetime] = None
+
+    def _get_oauth_creds(self) -> tuple[Optional[str], Optional[str]]:
+        """Read Reddit OAuth credentials from environment."""
+        client_id = os.getenv(self.reddit_config.client_id_env)
+        client_secret = os.getenv(self.reddit_config.client_secret_env)
+        if client_id and client_secret:
+            return client_id, client_secret
+        return None, None
+
+    async def _ensure_oauth_token(self) -> Optional[str]:
+        """Fetch or refresh Reddit OAuth access token.
+
+        Returns:
+            Access token string, or None if OAuth is not configured.
+        """
+        if self._oauth_token and self._oauth_expires and datetime.now(timezone.utc) < self._oauth_expires:
+            return self._oauth_token
+
+        client_id, client_secret = self._get_oauth_creds()
+        if not client_id or not client_secret:
+            return None
+
+        try:
+            resp = await self.client.post(
+                "https://www.reddit.com/api/v1/access_token",
+                data={"grant_type": "client_credentials"},
+                auth=httpx.BasicAuth(client_id, client_secret),
+                headers={"User-Agent": self.reddit_config.user_agent},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            self._oauth_token = data.get("access_token")
+            expires_in = data.get("expires_in", 3600)
+            # Refresh 60 seconds early to avoid edge races
+            self._oauth_expires = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
+            logger.info("Reddit OAuth token acquired, expires in %ds", expires_in)
+            return self._oauth_token
+        except httpx.HTTPError as exc:
+            logger.warning("Failed to obtain Reddit OAuth token: %s", exc)
+            return None
 
     async def fetch(self, since: datetime) -> List[ContentItem]:
         if not self.config.get("enabled", True):
@@ -208,11 +251,19 @@ class RedditScraper(BaseScraper):
         )
 
     async def _reddit_get(self, url: str, params: dict) -> Optional[Any]:
+        headers = dict(REDDIT_HEADERS)
+        headers["User-Agent"] = self.reddit_config.user_agent
+
+        # Use OAuth Bearer token when available (much more reliable in CI)
+        token = await self._ensure_oauth_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
         try:
             response = await self.client.get(
                 url,
                 params=params,
-                headers=REDDIT_HEADERS,
+                headers=headers,
                 follow_redirects=True,
             )
             if response.status_code == 429:
@@ -222,7 +273,7 @@ class RedditScraper(BaseScraper):
                 response = await self.client.get(
                     url,
                     params=params,
-                    headers=REDDIT_HEADERS,
+                    headers=headers,
                     follow_redirects=True,
                 )
             if response.status_code == 403 and "/comments/" in url:
