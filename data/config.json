@@ -105,7 +105,10 @@
           "min_score": 60
         }
       ],
-      "fetch_comments": 10
+      "fetch_comments": 10,
+      "client_id_env": "REDDIT_CLIENT_ID",
+      "client_secret_env": "REDDIT_CLIENT_SECRET",
+      "user_agent": "Horizon-Aggregator/1.0"
     },
     "telegram": {
       "enabled": true,
