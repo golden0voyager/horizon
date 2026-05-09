@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 import httpx
 
 from ..models import ContentItem
@@ -11,12 +11,12 @@ from ..models import ContentItem
 class BaseScraper(ABC):
     """Abstract base class for all scrapers."""
 
-    def __init__(self, config: dict, http_client: httpx.AsyncClient):
+    def __init__(self, config: dict, http_client: Optional[httpx.AsyncClient] = None):
         """Initialize scraper.
 
         Args:
             config: Scraper-specific configuration
-            http_client: Shared async HTTP client
+            http_client: Shared async HTTP client (optional for browser-based scrapers)
         """
         self.config = config
         self.client = http_client
