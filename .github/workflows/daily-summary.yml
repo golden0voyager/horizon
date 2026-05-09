@@ -26,7 +26,10 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --extra twitter
+
+      - name: Install Playwright browsers
+        run: uv run playwright install chromium
 
       - name: Run Horizon
         env:
