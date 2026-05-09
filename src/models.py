@@ -54,6 +54,7 @@ class AIProvider(str, Enum):
     GROQ = "groq"
     SILICONFLOW = "siliconflow"
     NVIDIA = "nvidia"
+    SENSENOVA = "sensenova"
 
 # Default models and API key env vars for each provider
 AI_PROVIDER_DEFAULTS = {
@@ -88,6 +89,10 @@ AI_PROVIDER_DEFAULTS = {
     AIProvider.XIAOMIMIMO: {
         "model": "mimo-v2.5-pro",
         "api_key_env": "XIAOMIMIMO_API_KEY",
+    },
+    AIProvider.SENSENOVA: {
+        "model": "DeepSeek-V3-1",
+        "api_key_env": "SENSENOVA_API_KEY",
     }
 }
 
@@ -96,6 +101,7 @@ class AIConfig(BaseModel):
     """AI client configuration."""
 
     provider: AIProvider
+    provider_chain: Optional[str] = None
     model: str
     base_url: Optional[str] = None
     base_url_env: Optional[str] = None
@@ -115,24 +121,40 @@ class AIConfig(BaseModel):
         if isinstance(data, dict):
             provider_env = os.getenv("HORIZON_AI_PROVIDER")
             if provider_env:
-                try:
-                    provider = AIProvider(provider_env)
-                    data["provider"] = provider
-                    
-                    # Apply smart defaults for the chosen provider if not explicitly overridden
-                    if provider in AI_PROVIDER_DEFAULTS:
-                        defaults = AI_PROVIDER_DEFAULTS[provider]
-                        
-                        # Only apply default model if not provided in env OR current data
-                        if not os.getenv("HORIZON_AI_MODEL"):
-                            data["model"] = defaults["model"]
-                            
-                        # Only apply default key env if not provided in env OR current data
-                        if not os.getenv("HORIZON_AI_API_KEY_ENV"):
-                            data["api_key_env"] = defaults["api_key_env"]
-                except ValueError:
-                    # If invalid provider string, fallback to original logic or ignore
-                    data["provider"] = provider_env
+                # Handle provider chain syntax: "openrouter,sensenova,gemini"
+                if "," in provider_env:
+                    data["provider_chain"] = provider_env
+                    first_provider_str = provider_env.split(",")[0].strip()
+                    try:
+                        provider = AIProvider(first_provider_str)
+                        data["provider"] = provider
+                        if provider in AI_PROVIDER_DEFAULTS:
+                            defaults = AI_PROVIDER_DEFAULTS[provider]
+                            if not os.getenv("HORIZON_AI_MODEL") and "model" not in data:
+                                data["model"] = defaults["model"]
+                            if not os.getenv("HORIZON_AI_API_KEY_ENV") and "api_key_env" not in data:
+                                data["api_key_env"] = defaults["api_key_env"]
+                    except ValueError:
+                        data["provider"] = first_provider_str
+                else:
+                    try:
+                        provider = AIProvider(provider_env)
+                        data["provider"] = provider
+
+                        # Apply smart defaults for the chosen provider if not explicitly overridden
+                        if provider in AI_PROVIDER_DEFAULTS:
+                            defaults = AI_PROVIDER_DEFAULTS[provider]
+
+                            # Only apply default model if not provided in env OR current data
+                            if not os.getenv("HORIZON_AI_MODEL"):
+                                data["model"] = defaults["model"]
+
+                            # Only apply default key env if not provided in env OR current data
+                            if not os.getenv("HORIZON_AI_API_KEY_ENV"):
+                                data["api_key_env"] = defaults["api_key_env"]
+                    except ValueError:
+                        # If invalid provider string, fallback to original logic or ignore
+                        data["provider"] = provider_env
 
             # Explicit overrides still take ultimate precedence
             model_env = os.getenv("HORIZON_AI_MODEL")
