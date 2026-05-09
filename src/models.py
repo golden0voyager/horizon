@@ -217,6 +217,10 @@ class RedditConfig(BaseModel):
     subreddits: List[RedditSubredditConfig] = Field(default_factory=list)
     users: List[RedditUserConfig] = Field(default_factory=list)
     fetch_comments: int = 5     # top comments per post, 0 to disable
+    # OAuth2 credentials (optional but strongly recommended for CI environments)
+    client_id_env: str = "REDDIT_CLIENT_ID"
+    client_secret_env: str = "REDDIT_CLIENT_SECRET"
+    user_agent: str = "Horizon-Aggregator/1.0"
 
 
 class TelegramChannelConfig(BaseModel):
