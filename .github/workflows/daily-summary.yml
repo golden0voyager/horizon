@@ -31,6 +31,20 @@ jobs:
       - name: Install Playwright browsers
         run: uv run playwright install chromium
 
+      - name: Prepare Twitter cookies
+        run: |
+          mkdir -p data
+          if [ -n "${{ secrets.X_COOKIES_1 }}" ]; then
+            echo "${{ secrets.X_COOKIES_1 }}" | base64 -d > data/x_cookies_1.json
+          fi
+          if [ -n "${{ secrets.X_COOKIES_2 }}" ]; then
+            echo "${{ secrets.X_COOKIES_2 }}" | base64 -d > data/x_cookies_2.json
+          fi
+          if [ -n "${{ secrets.X_COOKIES_3 }}" ]; then
+            echo "${{ secrets.X_COOKIES_3 }}" | base64 -d > data/x_cookies_3.json
+          fi
+          ls -la data/x_cookies_*.json || echo "No cookie files written"
+
       - name: Run Horizon
         env:
           # AI Config Overrides (来自 GitHub Secrets)
