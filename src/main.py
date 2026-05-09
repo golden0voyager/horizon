@@ -2,6 +2,8 @@
 
 import argparse
 import asyncio
+import logging
+import os
 import sys
 from pathlib import Path
 
@@ -42,6 +44,13 @@ def main():
     try:
         # Load environment variables from .env file
         load_dotenv()
+
+        # Enable WARNING+ logging by default; set HORIZON_LOG=info for diagnostics
+        log_level = os.getenv("HORIZON_LOG", "WARNING").upper()
+        logging.basicConfig(
+            level=getattr(logging, log_level, logging.WARNING),
+            format="%(levelname)s:%(name)s: %(message)s",
+        )
 
         # Ensure we're in the project directory or use data/ in current dir
         data_dir = Path("data")
