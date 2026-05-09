@@ -27,7 +27,16 @@ except ImportError:
     Stealth = None  # type: ignore[misc,assignment]
 
 
-PROXY = os.getenv("PROXY", "")
+def _get_proxy() -> str:
+    """Resolve proxy from common env vars (PROXY, http_proxy, all_proxy)."""
+    for key in ("PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        val = os.getenv(key, "").strip()
+        if val:
+            return val
+    return ""
+
+
+PROXY = _get_proxy()
 
 
 def _load_browser_cookies(file_path: str) -> list[dict]:
@@ -120,7 +129,7 @@ class TwitterScraper(BaseScraper):
                 try:
                     await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=15000)
                     await asyncio.sleep(2)
-                    logger.debug("Cookie #%d warm-up done", i + 1)
+                    logger.info("Cookie #%d warm-up done", i + 1)
                 except Exception as exc:
                     logger.warning("Cookie #%d warm-up failed: %s", i + 1, exc)
                 finally:
@@ -143,9 +152,11 @@ class TwitterScraper(BaseScraper):
                         await asyncio.sleep(30)
                         consecutive_failures = 0
 
+                    logger.info("Scraping @%s with cookie #%d...", username, context_idx + 1)
                     tweets = await self._scrape_user(ctx, username, since)
 
                     if tweets is not None:
+                        logger.info("  -> @%s: %d tweets found", username, len(tweets))
                         consecutive_failures = 0
                         parsed = [item for item in (self._parse_tweet(t, username) for t in tweets) if item]
                         async with lock:
@@ -277,6 +288,11 @@ class TwitterScraper(BaseScraper):
             await asyncio.sleep(5)
             start_time = asyncio.get_event_loop().time()
 
+            # Quick diagnostic: check if page requires login
+            body_text = await page.evaluate("document.body ? document.body.innerText : ''")
+            if body_text and any(k in body_text.lower() for k in ("log in", "sign up", "create account")):
+                logger.warning("  -> @%s page shows login gate — cookie may be invalid", username)
+
             while (asyncio.get_event_loop().time() - start_time) < 60:
                 if graphql_tweets:
                     result = []
@@ -295,8 +311,9 @@ class TwitterScraper(BaseScraper):
                         result.append(t)
 
                     if result:
-                        logger.debug("Scraped %d tweets for @%s", len(result), username)
+                        logger.info("  -> @%s: %d tweets within time window", username, len(result))
                         return result[: self.twitter_config.fetch_limit]
+                    logger.info("  -> @%s: intercepted %d tweets but all outside time window", username, len(graphql_tweets))
                     return []
 
                 # Check for error pages
@@ -320,7 +337,7 @@ class TwitterScraper(BaseScraper):
                     break
 
             if not graphql_tweets:
-                logger.warning("No GraphQL data intercepted for @%s", username)
+                logger.warning("  -> @%s: no GraphQL data intercepted (cookie or page issue)", username)
                 return None
             return []
 
