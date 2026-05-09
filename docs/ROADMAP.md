@@ -3,7 +3,7 @@
 本文档记录了 Horizon 信息聚合系统的后续优化方向与扩展设想。
 
 ## 1. AI 决策层 (AI Brain)
-- [ ] **多级供应商 Fallback**：支持 `HORIZON_AI_PROVIDER=gemini,openrouter`，自动应对 API 故障。
+- [x] **多级供应商 Fallback**：支持 `HORIZON_AI_PROVIDER=gemini,openrouter`，自动应对 API 故障。
 - [ ] **混合模型策略 (Hybrid Logic)**：
     - 使用极廉价模型（如 Llama 3 8B）进行海量初筛。
     - 仅对高分（Scored ≥ 8.5）内容使用昂贵模型（如 Claude 3.5/Gemini 1.5 Pro）进行深度总结。
