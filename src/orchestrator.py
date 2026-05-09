@@ -6,7 +6,17 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 from urllib.parse import urlparse
 import httpx
+import os
 from rich.console import Console
+
+
+def _resolve_proxy() -> str:
+    """Resolve proxy from common env vars."""
+    for key in ("PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        val = os.getenv(key, "").strip()
+        if val:
+            return val
+    return ""
 
 from .models import Config, ContentItem
 from .storage.manager import StorageManager
@@ -229,7 +239,11 @@ class HorizonOrchestrator:
         Returns:
             List[ContentItem]: All fetched items
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        client_kwargs = {"timeout": 30.0}
+        proxy = _resolve_proxy()
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as client:
             tasks = []
 
             # GitHub sources
@@ -467,7 +481,11 @@ class HorizonOrchestrator:
             f"💬 Fetching reply text for {len(twitter_items)} Twitter items..."
         )
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        client_kwargs = {"timeout": 30.0}
+        proxy = _resolve_proxy()
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as client:
             scraper = TwitterScraper(tw_cfg, client)
             expanded = []
             for item in twitter_items:
