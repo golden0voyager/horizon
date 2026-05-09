@@ -237,16 +237,20 @@ class TelegramConfig(BaseModel):
 
 
 class TwitterConfig(BaseModel):
-    """Twitter source configuration via Apify."""
+    """Twitter source configuration."""
     enabled: bool = True
-    apify_token_env: str = "APIFY_TOKEN"
-    actor_id: str = "altimis~scweet"
     users: List[str] = Field(default_factory=list)
     fetch_limit: int = 10
     fetch_reply_text: bool = False
     max_replies_per_tweet: int = 3
     max_tweets_to_expand: int = 10
     reply_min_likes: int = 0
+    # Playwright + Cookie settings (replaces Apify)
+    cookie_dir: str = "data"
+    cookie_file_pattern: str = "x_cookies_*.json"
+    # Deprecated Apify settings (kept for backward compat, ignored by new scraper)
+    apify_token_env: str = "APIFY_TOKEN"
+    actor_id: str = "altimis~scweet"
 
 
 class SourcesConfig(BaseModel):
