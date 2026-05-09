@@ -2,7 +2,7 @@
 
 import os
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import List, Optional
 
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI, AsyncAzureOpenAI
@@ -10,6 +10,8 @@ from google import genai
 from google.genai import types
 
 from ..models import AIConfig, AIProvider
+from rich import print as rich_print
+
 from .tokens import record_usage
 
 
@@ -608,6 +610,19 @@ class OpenRouterClient(AliClient):
         return response.choices[0].message.content
 
 
+class SenseNovaClient(AliClient):
+    """Client for SenseNova (商汤) API."""
+
+    def __init__(self, config: AIConfig):
+        super().__init__(config)
+        api_key = os.getenv(config.api_key_env)
+        kwargs = {
+            "api_key": api_key,
+            "base_url": get_base_url(config, "https://api.sensenova.cn/compatible-mode/v2"),
+        }
+        self.client = AsyncOpenAI(**kwargs)
+
+
 class GroqClient(AliClient):
     """Client for Groq API."""
     def __init__(self, config: AIConfig):
@@ -713,18 +728,60 @@ class NvidiaClient(AliClient):
         self.client = AsyncOpenAI(**kwargs)
 
 
-def create_ai_client(config: AIConfig) -> AIClient:
-    """Factory function to create appropriate AI client.
+class ChainedAIClient(AIClient):
+    """Chain multiple AI clients with automatic fallback.
 
-    Args:
-        config: AI configuration
-
-    Returns:
-        AIClient: Initialized AI client
-
-    Raises:
-        ValueError: If provider is not supported
+    When a provider fails with a retryable error (rate limit, auth/quota,
+    service unavailable, or empty response), automatically falls back to
+    the next provider in the chain.
     """
+
+    def __init__(self, configs: List[AIConfig], clients: List[AIClient]):
+        self.configs = configs
+        self.clients = clients
+
+    async def complete(
+        self,
+        system: str,
+        user: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        last_error: Optional[Exception] = None
+        for i, client in enumerate(self.clients):
+            try:
+                result = await client.complete(system, user, temperature, max_tokens)
+                if not result or not result.strip():
+                    raise ValueError("Empty response from provider")
+                return result
+            except Exception as exc:
+                if not self._should_fallback(exc):
+                    raise
+                last_error = exc
+                if i < len(self.clients) - 1:
+                    rich_print(
+                        f"\n[yellow]Provider {self.configs[i].provider.value} failed ({exc}), "
+                        f"falling back to {self.configs[i + 1].provider.value}...[/yellow]"
+                    )
+        raise RuntimeError(f"All providers failed. Last error: {last_error}")
+
+    @staticmethod
+    def _should_fallback(exc: Exception) -> bool:
+        """Determine if an error warrants fallback to the next provider."""
+        msg = str(exc).lower()
+        if "429" in msg or "rate limit" in msg:
+            return True
+        if "401" in msg or "403" in msg or "quota" in msg or "exceeded" in msg:
+            return True
+        if "502" in msg or "503" in msg or "service unavailable" in msg:
+            return True
+        if "empty response" in msg:
+            return True
+        return False
+
+
+def _create_single_client(config: AIConfig) -> AIClient:
+    """Create a single AI client instance."""
     if config.provider == AIProvider.ANTHROPIC:
         return AnthropicClient(config)
     elif config.provider == AIProvider.OPENAI:
@@ -755,5 +812,59 @@ def create_ai_client(config: AIConfig) -> AIClient:
         return SiliconFlowClient(config)
     elif config.provider == AIProvider.NVIDIA:
         return NvidiaClient(config)
+    elif config.provider == AIProvider.SENSENOVA:
+        return SenseNovaClient(config)
     else:
         raise ValueError(f"Unsupported AI provider: {config.provider}")
+
+
+def _create_chained_client(config: AIConfig) -> ChainedAIClient:
+    """Build a ChainedAIClient from a comma-separated provider chain."""
+    from ..models import AI_PROVIDER_DEFAULTS
+
+    provider_names = [p.strip() for p in config.provider_chain.split(",") if p.strip()]
+    if not provider_names:
+        raise ValueError("provider_chain is empty")
+
+    chain_configs: List[AIConfig] = []
+    for name in provider_names:
+        try:
+            provider = AIProvider(name)
+        except ValueError:
+            raise ValueError(f"Unsupported AI provider in chain: {name}")
+
+        defaults = AI_PROVIDER_DEFAULTS.get(provider, {})
+        cfg = AIConfig(
+            provider=provider,
+            model=defaults.get("model", config.model),
+            api_key_env=defaults.get("api_key_env", config.api_key_env),
+            base_url=config.base_url,
+            base_url_env=config.base_url_env,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            throttle_sec=config.throttle_sec,
+            languages=config.languages,
+            azure_endpoint_env=config.azure_endpoint_env,
+            api_version=config.api_version,
+        )
+        chain_configs.append(cfg)
+
+    clients = [_create_single_client(cfg) for cfg in chain_configs]
+    return ChainedAIClient(chain_configs, clients)
+
+
+def create_ai_client(config: AIConfig) -> AIClient:
+    """Factory function to create appropriate AI client.
+
+    Args:
+        config: AI configuration
+
+    Returns:
+        AIClient: Initialized AI client
+
+    Raises:
+        ValueError: If provider is not supported
+    """
+    if config.provider_chain:
+        return _create_chained_client(config)
+    return _create_single_client(config)
