@@ -56,3 +56,6 @@ logs/*.log
 
 # todo
 todo.txt
+# Skill-generated analysis artifacts
+.understand-anything/
+.codegraph/
