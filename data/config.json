@@ -8,7 +8,7 @@
     // 支持环境变量 HORIZON_AI_PROVIDER=sensenova,openrouter,gemini
     "provider_chain": "sensenova,openrouter,gemini",
     // 模型名称：请根据所选提供商填写对应的模型 ID（如 qwen-max, deepseek-chat, moonshot-v1-8k 等）
-    "model": "DeepSeek-V3-1",
+    "model": "sensenova-6.7-flash-lite",
     "base_url": "",
     // 如果你需要使用特殊代理，系统会优先读取 .env 中的 {PROVIDER}_BASE_URL（如 DEEPSEEK_BASE_URL）。你也可以用 base_url_env 强制指定其他变量名。
     "base_url_env": "",

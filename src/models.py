@@ -91,7 +91,7 @@ AI_PROVIDER_DEFAULTS = {
         "api_key_env": "XIAOMIMIMO_API_KEY",
     },
     AIProvider.SENSENOVA: {
-        "model": "DeepSeek-V3-1",
+        "model": "sensenova-6.7-flash-lite",
         "api_key_env": "SENSENOVA_API_KEY",
     }
 }
