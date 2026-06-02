@@ -618,7 +618,7 @@ class SenseNovaClient(AliClient):
         api_key = os.getenv(config.api_key_env)
         kwargs = {
             "api_key": api_key,
-            "base_url": get_base_url(config, "https://api.sensenova.cn/compatible-mode/v2"),
+            "base_url": get_base_url(config, "https://token.sensenova.cn/v1"),
         }
         self.client = AsyncOpenAI(**kwargs)
 
