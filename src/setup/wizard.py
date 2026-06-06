@@ -60,7 +60,7 @@ def configure_ai() -> Optional[AIConfig]:
         default="openai",
     )
 
-    model = Prompt.ask("Model name", default="deepseek-chat" if provider == "openai" else "")
+    model = Prompt.ask("Model name", default="deepseek-chat" if provider in ("openai", "deepseek") else "")
 
     base_url = Prompt.ask("Base URL (leave empty for default)", default="")
 
@@ -72,6 +72,7 @@ def configure_ai() -> Optional[AIConfig]:
         "ali": "DASHSCOPE_API_KEY",
         "doubao": "DOUBAO_API_KEY",
         "minimax": "MINIMAX_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
     }
     api_key_env = Prompt.ask(
         "API key environment variable name",

@@ -1,14 +1,16 @@
 """Webhook notification service for Horizon."""
 
-import html
 import json
 import logging
 import os
 import re
+from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Union, cast
+from urllib.parse import urlparse
 import httpx
 
+from ..ai.markdown_utils import clean_app_summary_markdown
 from ..models import ContentItem, WebhookConfig
 from ..ai.summarizer import DailySummarizer
 
@@ -17,17 +19,9 @@ logger = logging.getLogger(__name__)
 
 # Pattern: #{key} or #{key?param1=val1&param2=val2}
 _PLACEHOLDER_RE = re.compile(r"#\{(\w+)(\?\w+=[^}]+)?\}")
-_DETAILS_RE = re.compile(
-    r"<details>\s*<summary>(.*?)</summary>\s*(.*?)\s*</details>",
-    re.IGNORECASE | re.DOTALL,
+_SENSITIVE_HEADER_RE = re.compile(
+    r"(authorization|token|secret|signature|key|password)", re.IGNORECASE
 )
-_LI_LINK_RE = re.compile(
-    r"<li>\s*<a\s+[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>\s*</li>",
-    re.IGNORECASE | re.DOTALL,
-)
-_LI_RE = re.compile(r"<li>\s*(.*?)\s*</li>", re.IGNORECASE | re.DOTALL)
-_ANCHOR_ID_RE = re.compile(r"<a\s+[^>]*id=[\"'][^\"']+[\"'][^>]*>\s*</a>", re.IGNORECASE)
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _truncate(value: str, limit: int, split: str) -> str:
@@ -59,7 +53,9 @@ def _truncate(value: str, limit: int, split: str) -> str:
     return split.join(kept)
 
 
-def _render(template: Union[str, dict, list], variables: dict) -> Union[str, dict, list]:
+def _render(
+    template: Union[str, dict, list], variables: dict
+) -> Union[str, dict, list]:
     """Replace #{key} and #{key?params} placeholders in a template.
 
     Supports strings, dicts, and lists.  For dicts/lists, walks all
@@ -82,6 +78,7 @@ def _render(template: Union[str, dict, list], variables: dict) -> Union[str, dic
     if isinstance(template, list):
         return [_render(item, variables) for item in template]
     if isinstance(template, str):
+
         def _replace(match: re.Match) -> str:
             key = match.group(1)
             params_str = match.group(2)  # e.g. "?limit=500&split=---"
@@ -114,50 +111,14 @@ def _render(template: Union[str, dict, list], variables: dict) -> Union[str, dic
     return template
 
 
-def _strip_html_tags(value: str) -> str:
-    """Remove simple HTML tags and decode HTML entities."""
-    return html.unescape(_HTML_TAG_RE.sub("", value)).strip()
-
-
-def _convert_details_to_markdown(value: str) -> str:
-    """Convert HTML details blocks into plain Markdown sections.
-
-    Feishu card Markdown does not render HTML disclosure widgets, so references
-    are flattened to a heading plus Markdown links before webhook delivery.
-    """
-    def _replace(match: re.Match) -> str:
-        title = _strip_html_tags(match.group(1)) or "References"
-        body = match.group(2)
-        items: list[str] = []
-
-        for href, label in _LI_LINK_RE.findall(body):
-            clean_label = _strip_html_tags(label)
-            clean_href = html.unescape(href).strip()
-            if clean_label and clean_href:
-                items.append(f"- [{clean_label}]({clean_href})")
-
-        if not items:
-            for item in _LI_RE.findall(body):
-                clean_item = _strip_html_tags(item)
-                if clean_item:
-                    items.append(f"- {clean_item}")
-
-        if not items:
-            fallback = _strip_html_tags(body)
-            return f"**{title}**\n\n{fallback}" if fallback else f"**{title}**"
-
-        return f"**{title}**\n\n" + "\n".join(items)
-
-    return _DETAILS_RE.sub(_replace, value)
-
-
 def _format_markdown_for_webhook(value: str) -> str:
     """Flatten HTML constructs that chat/webhook Markdown often cannot render."""
-    value = _ANCHOR_ID_RE.sub("", value)
-    return _convert_details_to_markdown(value)
+    return clean_app_summary_markdown(value)
 
 
-def _prepare_variables_for_body(raw_body: Union[str, dict, list, None], variables: dict) -> dict:
+def _prepare_variables_for_body(
+    raw_body: Union[str, dict, list, None], variables: dict
+) -> dict:
     """Apply webhook-safe variable formatting before body rendering."""
     if raw_body is None or "summary" not in variables:
         return variables
@@ -235,27 +196,116 @@ def _extract_headers(headers_str: Optional[str]) -> dict:
     return headers
 
 
+def redact_url(url: str) -> str:
+    """Return a log-safe URL without query strings or fragments."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "<invalid-url>"
+    if not parts.scheme or not parts.netloc:
+        return "<redacted-url>"
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def redact_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Mask sensitive header values for logs and dry-run output."""
+    return {
+        key: "<redacted>" if _SENSITIVE_HEADER_RE.search(key) else value
+        for key, value in headers.items()
+    }
+
+
 class WebhookNotifier:
     """Sends webhook notifications after pipeline completion or failure."""
 
     def __init__(self, config: WebhookConfig, console=None):
         self.config = config
-        self.url = os.getenv(config.url_env or "") if config.url_env else None
         if console is None:
             try:
                 from rich.console import Console
+
                 self.console = Console()
             except ImportError:
+
                 class DummyConsole:
                     def print(self, *args, **kwargs):
                         print(*args, **kwargs)
+
                 self.console = DummyConsole()
         else:
             self.console = console
+        self.url = None
+        self._validate_config()  # sets self.url or raises ValueError
 
-    def _render_request_components(self, variables: dict) -> tuple[str, str | None, dict[str, str]]:
+    def _validate_url(self, url: str) -> str:
+        """Validate webhook URL has a valid scheme (http/https) and hostname.
+        Raises:
+            ValueError: If the URL is empty, has wrong scheme, no hostname,
+                        or is structurally invalid
+        """
+        url = url.strip()
+        # Remove shell escape artifacts: \? \= \& \% before query chars
+        url = re.sub(r"\\([?=&%])", r"\1", url)
+        if not url:
+            raise ValueError(
+                f"Webhook URL is empty (env var '{self.config.url_env}' is set but empty)"
+            )
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"Webhook URL must use http or https scheme, got '{parsed.scheme or 'none'}' "
+                f"(env var '{self.config.url_env}')"
+            )
+        if not parsed.hostname:
+            raise ValueError(
+                f"Webhook URL has no hostname: '{url}' "
+                f"(env var '{self.config.url_env}')"
+            )
+        try:
+            httpx.URL(url)
+        except httpx.InvalidURL as e:
+            raise ValueError(
+                f"Webhook URL is structurally invalid: '{url}' — {e} "
+                f"(env var '{self.config.url_env}')"
+            ) from e
+        return url
+
+    def _validate_config(self) -> None:
+        """Validate webhook URL configuration and print warnings for skip scenarios.
+
+        Raises ValueError when URL is present but invalid.
+        Sets self.url to the validated URL, or leaves it None for skip scenarios.
+        """
+        if not self.config.url_env:
+            # url_env not configured at all
+            logger.warning("Webhook enabled but url_env is not configured, skipping notification.")
+            self.console.print(
+                "[yellow]Webhook enabled but 'url_env' is not set in config. "
+                "No notification URL available, skipping.[/yellow]"
+            )
+            return
+
+        raw_url = os.getenv(self.config.url_env)
+        if raw_url is None:
+            # env var name configured, but the env var itself doesn't exist
+            logger.warning(
+                "Webhook enabled but env var '%s' is not set, skipping notification.",
+                self.config.url_env,
+            )
+            self.console.print(
+                f"[yellow]Webhook enabled but env var '{self.config.url_env}' is not set "
+                f"in your environment. Skipping notification.[/yellow]"
+            )
+            return
+
+        # env var exists — validate the URL value (strip + scheme + hostname + httpx check)
+        self.url = self._validate_url(raw_url)
+
+    def _render_request_components(
+        self, variables: dict
+    ) -> tuple[str, str | None, dict[str, str]]:
         """Render the final request URL, body, and headers for the given variables."""
-        request_url = _render(self.url or "", variables)
+        request_url = cast(str, _render(self.url or "", variables))
 
         content_type = "application/x-www-form-urlencoded"
         body_content = None
@@ -268,7 +318,7 @@ class WebhookNotifier:
                 body_content = json.dumps(rendered_obj, ensure_ascii=False)
                 content_type = "application/json"
             elif isinstance(raw_body, str) and raw_body.strip():
-                rendered = _render(raw_body, body_variables)
+                rendered = cast(str, _render(raw_body, body_variables))
                 body_content = rendered
                 if _isjson(rendered):
                     try:
@@ -346,10 +396,12 @@ class WebhookNotifier:
                 index=item_index,
                 total=len(important_items),
             )
-            elements.append(_collapsible_panel(
-                panel_title,
-                _format_markdown_for_webhook(item_content),
-            ))
+            elements.append(
+                _collapsible_panel(
+                    panel_title,
+                    _format_markdown_for_webhook(item_content),
+                )
+            )
 
         return {
             "msg_type": "interactive",
@@ -363,7 +415,8 @@ class WebhookNotifier:
                     "title": {
                         "tag": "plain_text",
                         "content": (
-                            f"Horizon {date} 折叠日报" if lang == "zh"
+                            f"Horizon {date} 折叠日报"
+                            if lang == "zh"
                             else f"Horizon {date} Collapsible Daily"
                         ),
                     },
@@ -379,9 +432,9 @@ class WebhookNotifier:
         """Build the fully rendered request for dry-run preview."""
         request_url, body_content, headers = self._render_request_components(variables)
         return {
-            "url": request_url,
+            "url": redact_url(request_url),
             "body": body_content,
-            "headers": headers,
+            "headers": redact_headers(headers),
         }
 
     def build_daily_summary_messages(
@@ -408,38 +461,45 @@ class WebhookNotifier:
         }
 
         if self._can_use_feishu_collapsible():
-            return [{
-                **base_vars,
-                "message_title": (
-                    f"Horizon {date} 折叠日报" if lang == "zh"
-                    else f"Horizon {date} Collapsible Daily"
-                ),
-                "message_kind": "collapsible",
-                "summary": self._build_feishu_collapsible_overview(
-                    item_count=len(important_items),
-                    all_items_count=all_items_count,
-                    date=date,
-                    lang=lang,
-                ),
-                "_request_body_override": self._build_feishu_collapsible_body(
-                    important_items=important_items,
-                    all_items_count=all_items_count,
-                    date=date,
-                    lang=lang,
-                    summarizer=summarizer,
-                ),
-            }]
+            return [
+                {
+                    **base_vars,
+                    "message_title": (
+                        f"Horizon {date} 折叠日报"
+                        if lang == "zh"
+                        else f"Horizon {date} Collapsible Daily"
+                    ),
+                    "message_kind": "collapsible",
+                    "summary": self._build_feishu_collapsible_overview(
+                        item_count=len(important_items),
+                        all_items_count=all_items_count,
+                        date=date,
+                        lang=lang,
+                    ),
+                    "_request_body_override": self._build_feishu_collapsible_body(
+                        important_items=important_items,
+                        all_items_count=all_items_count,
+                        date=date,
+                        lang=lang,
+                        summarizer=summarizer,
+                    ),
+                }
+            ]
 
         delivery = getattr(self.config, "delivery", "summary")
         if delivery == "summary_and_items":
             item_messages: List[dict[str, Any]] = []
             overview = summarizer.generate_webhook_overview(
-                important_items, date, all_items_count, language=lang,
+                important_items,
+                date,
+                all_items_count,
+                language=lang,
             )
             overview_message = {
                 **base_vars,
                 "message_title": (
-                    f"Horizon {date} 总览" if lang == "zh"
+                    f"Horizon {date} 总览"
+                    if lang == "zh"
                     else f"Horizon {date} Overview"
                 ),
                 "message_kind": "overview",
@@ -448,35 +508,40 @@ class WebhookNotifier:
             for item_index, item in enumerate(important_items, start=1):
                 title = str(item.metadata.get(f"title_{lang}") or item.title)
                 item_summary = summarizer.generate_webhook_item(
-                    item, language=lang, index=item_index,
+                    item,
+                    language=lang,
+                    index=item_index,
                     total=len(important_items),
                 )
-                item_messages.append({
-                    **base_vars,
-                    "message_title": f"{item_index}/{len(important_items)} {title}",
-                    "message_kind": "item",
-                    "item_index": item_index,
-                    "item_count": len(important_items),
-                    "item_title": title,
-                    "item_url": str(item.url),
-                    "item_score": item.ai_score or "",
-                    "summary": item_summary,
-                })
+                item_messages.append(
+                    {
+                        **base_vars,
+                        "message_title": f"{item_index}/{len(important_items)} {title}",
+                        "message_kind": "item",
+                        "item_index": item_index,
+                        "item_count": len(important_items),
+                        "item_title": title,
+                        "item_url": str(item.url),
+                        "item_score": item.ai_score or "",
+                        "summary": item_summary,
+                    }
+                )
 
             if getattr(self.config, "overview_position", "first") == "last":
                 return list(reversed(item_messages)) + [overview_message]
 
             return [overview_message] + item_messages
 
-        return [{
-            **base_vars,
-            "message_title": (
-                f"Horizon {date} 日报" if lang == "zh"
-                else f"Horizon {date} Daily"
-            ),
-            "message_kind": "summary",
-            "summary": summary,
-        }]
+        return [
+            {
+                **base_vars,
+                "message_title": (
+                    f"Horizon {date} 日报" if lang == "zh" else f"Horizon {date} Daily"
+                ),
+                "message_kind": "summary",
+                "summary": summary,
+            }
+        ]
 
     async def notify(self, variables: dict) -> None:
         """Send a webhook notification with template variable substitution.
@@ -490,22 +555,32 @@ class WebhookNotifier:
                        in URL, request_body, and headers.
         """
         if not self.config.enabled:
+            self.console.print("[yellow]Webhook is disabled, skipping notification.[/yellow]")
             return
 
         if not self.url:
-            logger.warning("Webhook enabled but URL is empty (env var %s not set), skipping notification.", self.config.url_env)
+            logger.warning(
+                "Webhook enabled but URL is empty (env var %s not set), skipping notification.",
+                self.config.url_env,
+            )
+            self.console.print(
+                f"[yellow]Webhook enabled but URL is empty — "
+                f"env var '{self.config.url_env}' is not set. Skipping notification.[/yellow]"
+            )
             return
 
-        method = "GET"
-        raw_body = self.config.request_body
         request_url, body_content, headers = self._render_request_components(variables)
-        if raw_body:
-            method = "POST"
-            logger.debug("Webhook POST body (%d chars): %s", len(body_content or ""), (body_content or "")[:2000])
+        safe_url = redact_url(request_url)
+        if body_content is not None:
+            logger.debug(
+                "Webhook POST body (%d chars): %s",
+                len(body_content or ""),
+                (body_content or "")[:2000],
+            )
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                if method == "GET":
+                if body_content is None:
                     response = await client.get(request_url, headers=headers)
                 else:
                     response = await client.post(
@@ -514,27 +589,122 @@ class WebhookNotifier:
                         headers=headers,
                     )
 
-            if response.status_code == 200:
-                logger.info(
-                    "Webhook sent OK. URL: %s, body: %s",
-                    request_url,
-                    response.text[:500],
+            self._handle_response_status(response, safe_url)
+
+        except httpx.InvalidURL as e:
+            self.console.print(
+                f"[red]Webhook URL is invalid: {e}[/red]"
+            )
+            logger.error("Webhook URL invalid: %s, env var: %s", e, self.config.url_env)
+        except httpx.ConnectError as e:
+            self.console.print(
+                f"[red]Webhook connection failed: {e}[/red]"
+            )
+            logger.error("Webhook connection failed: URL=%s, error=%s", safe_url, e)
+        except httpx.TimeoutException as e:
+            self.console.print(
+                f"[red]Webhook request timed out: {e}[/red]"
+            )
+            logger.error("Webhook timeout: URL=%s, error=%s", safe_url, e)
+        except Exception as e:
+            self.console.print(
+                f"[red]Webhook call failed unexpectedly: {type(e).__name__}: {e}[/red]"
+            )
+            logger.error("Webhook unexpected error: URL=%s, type=%s, error=%s", safe_url, type(e).__name__, e)
+
+    def _check_body_error_code(self, body: str) -> Optional[str]:
+        """Check if a 2xx response body contains a platform-specific error code.
+
+        Returns a descriptive string if an error is detected, or None if the
+        response appears successful.
+
+        Checked patterns:
+        - Feishu/Lark: {"code": non-zero, "msg": "..."} or {"StatusCode": non-zero}
+        - DingTalk: {"errcode": non-zero, "errmsg": "..."}
+        - Slack/Discord: {"ok": false}
+        """
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+        # Feishu/Lark: "code" or "StatusCode" field
+        feishu_code = data.get("code") or data.get("StatusCode")
+        if feishu_code is not None and feishu_code != 0:
+            msg = data.get("msg") or data.get("StatusMessage") or ""
+            return f"Feishu/Lark error (code={feishu_code}): {msg}"
+
+        # DingTalk: "errcode" field
+        dingtalk_code = data.get("errcode")
+        if dingtalk_code is not None and dingtalk_code != 0:
+            msg = data.get("errmsg") or ""
+            return f"DingTalk error (errcode={dingtalk_code}): {msg}"
+
+        # Slack/Discord: "ok" field
+        if data.get("ok") is False:
+            error = data.get("error") or ""
+            return f"Slack/Discord error: {error}"
+
+        return None
+
+    def _handle_response_status(self, response: httpx.Response, safe_url: str) -> None:
+        """Log and display HTTP response status by category.
+
+        Even 2xx responses may contain platform-specific error codes
+        in the JSON body (e.g. Feishu code=19001, DingTalk errcode=400,
+        Slack ok=false).
+        """
+        status = response.status_code
+        body = response.text[:500]
+
+        if 200 <= status < 300:
+            error_hint = self._check_body_error_code(body)
+            if error_hint:
+                logger.warning(
+                    "Webhook 2xx but body contains error: URL=%s, status=%d, body=%s",
+                    safe_url, status, body,
+                )
+                self.console.print(
+                    f"[yellow]Webhook response (status={status}): {body}[/yellow]\n"
+                    f"[yellow]{error_hint}[/yellow]"
                 )
             else:
+                logger.info("Webhook sent OK. URL: %s, body: %s", safe_url, body)
                 self.console.print(
-                    f"[red]Webhook failed! status={response.status_code} "
-                    f"response={response.text[:500]}[/red]"
+                    f"[green]Webhook response (status={status}): {body}[/green]"
                 )
-                logger.error(
-                    "Webhook failed! URL: %s, status: %d, body: %s",
-                    request_url,
-                    response.status_code,
-                    response.text[:500],
-                )
+            return
 
-        except Exception as e:
-            self.console.print(f"[red]Webhook call failed! Exception: {e}[/red]")
-            logger.error("Webhook call failed! URL: %s, exception: %s", request_url, e)
+        if 300 <= status < 400:
+            location = response.headers.get("location", "")
+            self.console.print(
+                f"[yellow]Webhook received redirect (status={status})[/yellow]"
+            )
+            logger.warning(
+                "Webhook redirect: URL=%s, status=%d, location=%s",
+                safe_url, status, location,
+            )
+        elif 400 <= status < 500:
+            self.console.print(
+                f"[red]Webhook client error (status={status}): {response.text[:500]}[/red]"
+            )
+            logger.error(
+                "Webhook client error: URL=%s, status=%d, body=%s",
+                safe_url, status, response.text[:500],
+            )
+        elif 500 <= status < 600:
+            self.console.print(
+                f"[red]Webhook server error (status={status}): {response.text[:500]}[/red]"
+            )
+            logger.error(
+                "Webhook server error: URL=%s, status=%d, body=%s",
+                safe_url, status, response.text[:500],
+            )
+        else:
+            self.console.print(
+                f"[red]Webhook unexpected status={status}: {response.text[:500]}[/red]"
+            )
+            logger.error("Webhook unexpected status: URL=%s, status=%d", safe_url, status)
 
     async def send_daily_summary(
         self,
@@ -589,14 +759,16 @@ class WebhookNotifier:
             error_message: Description of the failure
         """
         self.console.print("🔔 Sending webhook failure notification...")
-        await self.notify({
-            "date": date,
-            "language": "",
-            "important_items": 0,
-            "all_items": 0,
-            "result": "failed",
-            "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
-            "message_title": "Horizon generation failed",
-            "message_kind": "failure",
-            "summary": f"generation failed: {error_message}",
-        })
+        await self.notify(
+            {
+                "date": date,
+                "language": "",
+                "important_items": 0,
+                "all_items": 0,
+                "result": "failed",
+                "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+                "message_title": "Horizon generation failed",
+                "message_kind": "failure",
+                "summary": f"generation failed: {error_message}",
+            }
+        )

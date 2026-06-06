@@ -35,9 +35,30 @@ class ContentAnalyzer:
         throttle_sec = getattr(config, "throttle_sec", DEFAULT_THROTTLE_SEC)
         return max(throttle_sec, 0.0)
 
+    def _get_concurrency(self) -> int:
+        """Return the configured analysis concurrency, clamped to 1 or above."""
+        config = getattr(self.client, "config", None)
+        concurrency = getattr(config, "analysis_concurrency", 1)
+        return max(concurrency, 1)
+
     async def analyze_batch(self, items: List[ContentItem]) -> List[ContentItem]:
         throttle_sec = self._get_throttle_sec()
-        analyzed_items = []
+        concurrency = self._get_concurrency()
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _process(item: ContentItem, index: int, progress_task) -> ContentItem:
+            async with semaphore:
+                try:
+                    await self._analyze_item(item)
+                except Exception as e:
+                    print(f"Error analyzing item {item.id}: {e}")
+                    item.ai_score = 0.0
+                    item.ai_reason = "Analysis failed"
+                    item.ai_summary = item.title
+                if throttle_sec > 0 and index < len(items) - 1:
+                    await asyncio.sleep(throttle_sec)
+            progress.advance(progress_task)
+            return item
 
         with Progress(
             SpinnerColumn(),
@@ -47,20 +68,10 @@ class ContentAnalyzer:
             transient=True,
         ) as progress:
             task = progress.add_task("Analyzing", total=len(items))
-
-            for index, item in enumerate(items):
-                try:
-                    await self._analyze_item(item)
-                    analyzed_items.append(item)
-                except Exception as e:
-                    print(f"Error analyzing item {item.id}: {e}")
-                    item.ai_score = 0.0
-                    item.ai_reason = "Analysis failed"
-                    item.ai_summary = item.title
-                    analyzed_items.append(item)
-                progress.advance(task)
-                if throttle_sec > 0 and index < len(items) - 1:
-                    await asyncio.sleep(throttle_sec)
+            coros = [
+                _process(item, i, task) for i, item in enumerate(items)
+            ]
+            analyzed_items = await asyncio.gather(*coros)
 
         return analyzed_items
 

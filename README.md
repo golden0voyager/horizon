@@ -20,6 +20,7 @@
 ![Doubao](https://img.shields.io/badge/Doubao-00D6C2?style=flat-square)
 ![MiniMax](https://img.shields.io/badge/MiniMax-FF6F00?style=flat-square)
 ![OpenClaw](https://img.shields.io/badge/OpenClaw-C83232?style=flat-square)
+![Ollama](https://img.shields.io/badge/Ollama-FFFFFF?style=flat-square&logo=Ollama&logoColor=black)
 
 📡 Your own AI-powered news radar. Generates daily briefings in English & Chinese. | 构建你专属的 AI 新闻雷达
 
@@ -71,8 +72,8 @@ But Horizon is not just another summarizer. AI is great at reducing noise, but n
 
 ## Features
 
-- **📡 Watch Your Own Sources** — Track Hacker News, RSS, Reddit, Telegram, Twitter/X, and GitHub releases or user activity in one pipeline
-- **🤖 Turn Noise Into a Reading List** — Score each item from 0-10 with Claude, GPT, Gemini, DeepSeek, Doubao, MiniMax, or any OpenAI-compatible API
+- **📡 Watch Your Own Sources** — Track Hacker News, RSS, Reddit, Telegram, Twitter/X, GitHub releases or user activity, and OpenBB financial news watchlists in one pipeline
+- **🤖 Turn Noise Into a Reading List** — Score each item from 0-10 with Claude, GPT, Gemini, DeepSeek, Doubao, MiniMax, Ollama, or any OpenAI-compatible API
 - **🔗 Merge Repeated Stories** — Deduplicate the same story across platforms before it reaches your briefing
 - **🔍 Understand the Background** — Add web-researched context for unfamiliar concepts, companies, projects, and technical terms
 - **💬 Read the Conversation** — Collect and summarize community comments from Hacker News, Reddit, and other supported sources
@@ -114,6 +115,7 @@ flowchart LR
         telegram["✈️ Telegram"]
         twitter["🐦 Twitter / X"]
         github["🐙 GitHub"]
+        openbb["💹 OpenBB"]
     end
 
     fetch["📥 Fetch"]
@@ -137,6 +139,7 @@ flowchart LR
     telegram --> fetch
     twitter --> fetch
     github --> fetch
+    openbb --> fetch
 
     fetch --> dedup --> score --> enrich --> summary
     config --> score
@@ -149,7 +152,7 @@ flowchart LR
     summary --> mcp
 
     class config config
-    class rss,hn,reddit,telegram,twitter,github source
+    class rss,hn,reddit,telegram,twitter,github,openbb source
     class fetch,dedup,score,enrich,summary process
     class site,email,webhook,mcp output
 ```
@@ -170,7 +173,7 @@ flowchart LR
 
 ```bash
 git clone https://github.com/Thysrael/Horizon.git
-cd horizon
+cd Horizon
 
 # Install with uv (recommended)
 uv sync
@@ -184,11 +187,23 @@ pip install -e .
 
 `dev` is currently defined as an optional extra in `pyproject.toml`, so use `uv sync --extra dev` for pytest and other development dependencies.
 
+If you want the optional OpenBB financial-news source, install its extra too:
+
+```bash
+uv sync --extra openbb
+```
+
+If `openbb` pulls packages without wheels on your machine, install the SDK manually with binaries only:
+
+```bash
+uv pip install --only-binary=:all: openbb openbb-benzinga
+```
+
 **Option B: Docker**
 
 ```bash
 git clone https://github.com/Thysrael/Horizon.git
-cd horizon
+cd Horizon
 
 # Configure environment
 cp .env.example .env
@@ -196,10 +211,10 @@ cp data/config.example.json data/config.json
 # Edit .env and data/config.json with your API keys and preferences
 
 # Run with Docker Compose
-docker-compose run --rm horizon
+docker compose run --rm horizon
 
 # Or run with custom time window
-docker-compose run --rm horizon --hours 48
+docker compose run --rm horizon --hours 48
 ```
 
 ### 2. Configure
@@ -239,6 +254,27 @@ Minimal manual configuration:
 }
 ```
 
+`api_key_env` must be the name of an environment variable, not the API key
+itself. Put the real secret in `.env`:
+
+```bash
+OPENAI_API_KEY=sk-your-key
+```
+
+For Gemini, use `GOOGLE_API_KEY`:
+
+```jsonc
+{
+  "ai": {
+    "provider": "gemini",
+    "model": "gemini-2.0-flash",
+    "api_key_env": "GOOGLE_API_KEY"
+  }
+}
+```
+
+Any string value in `data/config.json` can reference environment variables with `${VAR_NAME}`. This is useful for values such as `ai.base_url`, private RSS feed URLs, webhook endpoints, or custom header templates.
+
 For the full reference, see the [Configuration Guide](docs/configuration.md).
 
 ### 3. Run
@@ -253,8 +289,8 @@ uv run horizon --hours 48  # Fetch from last 48 hours
 #### With Docker
 
 ```bash
-docker-compose run --rm horizon           # Run with default 24h window
-docker-compose run --rm horizon --hours 48  # Fetch from last 48 hours
+docker compose run --rm horizon           # Run with default 24h window
+docker compose run --rm horizon --hours 48  # Fetch from last 48 hours
 ```
 
 The generated report will be saved to `data/summaries/`.
@@ -273,6 +309,7 @@ Horizon works great as a **GitHub Actions** cron job. See [`.github/workflows/da
 | **Telegram** | Public channel messages | — |
 | **Twitter / X** | Tweets from specific users | Yes (top N replies) |
 | **GitHub** | User events & repo releases | — |
+| **OpenBB** | Financial company news by watchlist/provider | — |
 
 ## Where Your Briefing Goes
 
@@ -286,6 +323,14 @@ Horizon can publish or deliver the generated briefing in several ways:
 | **MCP Server** | Exposes Horizon pipeline steps as tools so AI assistants can fetch, score, filter, enrich, summarize, and run the full workflow |
 
 For setup details, see the [Configuration Guide](docs/configuration.md). For MCP tool references and client setup, see [`src/mcp/README.md`](src/mcp/README.md) and [`src/mcp/integration.md`](src/mcp/integration.md).
+
+## Supported By
+
+Horizon is an open-source project maintained in spare time. If you'd like to support the project or be listed here, feel free to [open an issue](https://github.com/Thysrael/Horizon/issues/new) or [email me](mailto:thysrael@163.com).
+
+| Supporter | Details |
+|-----------|---------|
+| [<img src="docs/assets/compshare-logo.png" alt="Compshare / 优云智算" width="220" />](https://www.compshare.cn/?ytag=GPU_YY_git_Horizon) | Compshare currently supports Horizon. Compshare is UCloud's AI cloud platform, offering cost-effective monthly and pay-as-you-go domestic model agent plans starting from RMB 49/month, as well as stable officially relayed overseas models. It supports Claude Code, Codex, and API usage, with enterprise-grade high concurrency, 24/7 technical support, and self-service invoicing.<br><br>Register through their [link](https://www.compshare.cn/?ytag=GPU_YY_git_Horizon) to receive a free RMB 5 trial credit. |
 
 ## Documentation
 
@@ -302,25 +347,24 @@ Horizon already supports the full daily briefing loop: multi-source collection, 
 
 Planned improvements:
 
-- More source types, such as Twitter/X and Discord
+- More source types, such as Discord
 - Custom scoring prompts per source
 - Publish releases on GitHub
 - Publish the package to PyPI for `pip install`
 
 ## Contributing
 
-Contributions are welcome! Feel free to open issues or submit pull requests.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for code, documentation, and source-sharing guidelines.
 
 ### Share Sources
 
 Want to share valuable source discoveries with the Horizon community? Please submit them through **[horizon1123.top](https://horizon1123.top)**.
 
-Great candidates: niche RSS discoveries, active subreddit trends, notable GitHub updates, or Telegram channel highlights in your area of expertise.
-
 ## Acknowledgements
 
 - Special thanks to [LINUX.DO](https://linux.do/) for providing a promotion platform.
 - Special thanks to [HelloGitHub](https://hellogithub.com/) for valuable guidance and suggestions.
+- Special thanks to [AIGC Link](https://xhslink.com/m/80ngts127cA) for the promotions on XiaoHongShu.
 
 ## License
 

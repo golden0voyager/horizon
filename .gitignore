@@ -37,10 +37,14 @@ ENV/
 .env
 
 # Data files (keep structure, ignore content)
+data/config.json
 data/seen.json
 data/summaries/*.md
 data/subscribers.json
 data/x_cookies_*.json
+data/mcp.secrets.json
+data/mcp-secrets.json
+data/mcp-runs/
 
 docs/_posts/*.md
 
@@ -59,3 +63,5 @@ todo.txt
 # Skill-generated analysis artifacts
 .understand-anything/
 .codegraph/
+.ruff_cache
+.pytest_cache

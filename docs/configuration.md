@@ -11,6 +11,32 @@ Horizon is configured through two files: a `.env` file for API keys and a `data/
 
 Configure which AI model scores and summarizes your content.
 
+`api_key_env` is always an environment variable name, not the API key value.
+Store secrets in `.env` or your shell environment, then point `api_key_env` at
+that variable:
+
+```bash
+OPENAI_API_KEY=sk-your-key
+GOOGLE_API_KEY=your-gemini-key
+```
+
+When Horizon starts, environment variables have priority because
+`data/config.json` does not store the secret. For local VS Code runs, create
+`.env` in the repository root and launch Horizon from that same root directory.
+
+Common API key variable names:
+
+| Provider | `api_key_env` value |
+| --- | --- |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` |
+| Gemini | `GOOGLE_API_KEY` |
+| MiniMax | `MINIMAX_API_KEY` |
+| Aliyun DashScope | `DASHSCOPE_API_KEY` |
+| Doubao | `DOUBAO_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+
 **Anthropic Claude**:
 
 ```json
@@ -32,6 +58,19 @@ Configure which AI model scores and summarizes your content.
     "provider": "openai",
     "model": "gpt-4",
     "api_key_env": "OPENAI_API_KEY",
+    "throttle_sec": 0
+  }
+}
+```
+
+**Gemini**:
+
+```json
+{
+  "ai": {
+    "provider": "gemini",
+    "model": "gemini-2.0-flash",
+    "api_key_env": "GOOGLE_API_KEY",
     "throttle_sec": 0
   }
 }
@@ -60,14 +99,14 @@ Set `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT` in your `.env`. The `mode
 {
   "ai": {
     "provider": "minimax",
-    "model": "MiniMax-M2.7",
+    "model": "MiniMax-M3",
     "api_key_env": "MINIMAX_API_KEY",
     "throttle_sec": 0
   }
 }
 ```
 
-Available models: `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`, `MiniMax-M2.5`, `MiniMax-M2.5-highspeed`
+Available models: `MiniMax-M3`, `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`
 
 **Aliyun DashScope** (OpenAI-compatible):
 
@@ -100,6 +139,26 @@ If your model has a strict per-minute request cap, you can slow the scorer down 
 - `4.5` is a reasonable starting point for free-tier models capped around 15 requests per minute.
 - Set it back to `0` if you have enough throughput headroom and want maximum speed.
 
+### AI Concurrency
+
+By default, AI scoring and enrichment run one item at a time. If your API endpoint supports concurrent requests, you can increase throughput:
+
+```json
+{
+  "ai": {
+    "analysis_concurrency": 4,
+    "enrichment_concurrency": 2
+  }
+}
+```
+
+- `analysis_concurrency`: Number of items scored in parallel. Default is `1`.
+- `enrichment_concurrency`: Number of high-scoring items enriched in parallel. Default is `1`.
+- Both values are clamped to a minimum of `1`.
+- Preserve the existing retry behavior per item.
+- Result ordering is preserved regardless of concurrency.
+- If you also use `throttle_sec`, each concurrent task sleeps independently after finishing an item.
+
 **Custom Base URL** (for proxies):
 
 ```json
@@ -111,6 +170,8 @@ If your model has a strict per-minute request cap, you can slow the scorer down 
   }
 }
 ```
+
+For OpenAI-compatible gateways, Horizon sends `temperature` by default. If a newer reasoning-style model rejects that parameter with an error such as `temperature is deprecated for this model`, Horizon retries once without it and remembers that capability for later requests.
 
 ## Information Sources
 
@@ -197,6 +258,32 @@ All sources are configured under the top-level `sources` key in `config.json`.
 }
 ```
 
+### Telegram
+
+Telegram scraping uses the public web preview at `https://t.me/s/<channel>`, so no API key is required. Only public channels are supported.
+
+```json
+{
+  "sources": {
+    "telegram": {
+      "enabled": true,
+      "channels": [
+        {
+          "channel": "zaihuapd",
+          "enabled": true,
+          "fetch_limit": 20
+        }
+      ]
+    }
+  }
+}
+```
+
+- `enabled` — enable or disable Telegram fetching globally
+- `channels` — list of public Telegram channels to monitor
+- `channel` — Telegram channel username only, without `@` or the full `https://t.me/` URL
+- `fetch_limit` — maximum number of recent messages to inspect per channel per run (default: `20`)
+
 ### Twitter
 
 Requires an [Apify](https://apify.com) account. Set `APIFY_TOKEN` in your `.env` file. The free tier includes $5/month of credit, enough for roughly 20,000 tweets.
@@ -226,6 +313,79 @@ Requires an [Apify](https://apify.com) account. Set `APIFY_TOKEN` in your `.env`
 
 The scraper uses the `altimis/scweet` actor by default. You can override it with `actor_id` if needed.
 
+### OpenBB Financial News
+
+OpenBB is useful when you want equity or macro news from providers such as yfinance, Benzinga, FMP, Intrinio, Tiingo, SEC, or Federal Reserve through one SDK.
+
+Install the optional dependency before enabling the source:
+
+```bash
+uv sync --extra openbb
+```
+
+If your platform struggles to build transitive dependencies, prefer:
+
+```bash
+uv pip install --only-binary=:all: openbb openbb-benzinga
+```
+
+```json
+{
+  "sources": {
+    "openbb": {
+      "enabled": true,
+      "watchlists": [
+        {
+          "name": "megacaps",
+          "enabled": true,
+          "provider": "yfinance",
+          "fetch_limit": 20,
+          "category": "equities",
+          "symbols": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
+        }
+      ]
+    }
+  }
+}
+```
+
+- `enabled` — enable or disable the OpenBB source globally
+- `watchlists` — list of named ticker groups; each watchlist becomes one `news.company()` call per run
+- `name` — label shown in Horizon metadata and selection breakdowns
+- `provider` — OpenBB provider name such as `yfinance` or `benzinga`
+- `fetch_limit` — maximum news rows requested for that watchlist
+- `category` — optional tag stored on fetched items
+- `symbols` — ticker symbols to fetch together; group symbols by provider to keep requests efficient
+
+OpenBB provider credentials are handled by the OpenBB SDK itself, using its own environment variables or user settings. Horizon does not pass those secrets through `data/config.json`.
+
+### OSS Insight (Trending GitHub Repos)
+
+Pulls top star-gain repositories from the [OSS Insight](https://ossinsight.io) public API, which aggregates GitHub WatchEvents. Useful for surfacing repos that are gaining stars right now without needing to scrape GitHub Trending or query BigQuery.
+
+```json
+{
+  "sources": {
+    "ossinsight": {
+      "enabled": true,
+      "period": "past_24_hours",
+      "languages": ["All", "Python", "TypeScript"],
+      "keywords": [],
+      "min_stars": 10,
+      "max_items": 30
+    }
+  }
+}
+```
+
+- `period` — time window for star-gain ranking. Supported: `past_24_hours`, `past_28_days`. (`past_7_days` is currently broken upstream.)
+- `languages` — primary language buckets to query. Use `"All"` for the full ranking, or any GitHub language label such as `"Python"`, `"TypeScript"`, `"Rust"`, `"Jupyter Notebook"`. The scraper fans out one request per language and merges results.
+- `keywords` — optional case-insensitive substrings matched against `description`, `collection_names`, and `repo_name`. Only repos containing at least one keyword pass through. Leave empty to ingest everything trending.
+- `min_stars` — drop repos with fewer than this many stars gained in the period.
+- `max_items` — final cap after merging and sorting by `stars_gained` descending.
+
+No API key is required.
+
 ## Filtering
 
 Content is scored 0-10:
@@ -250,17 +410,34 @@ Content is scored 0-10:
 
 ## Environment Variable Substitution
 
-RSS feed URLs support `${VAR_NAME}` syntax for secrets. The variable is expanded at runtime from environment variables (or `.env` file):
+Any string value in `data/config.json` supports `${VAR_NAME}` syntax. Variables are expanded at runtime from the environment (including values loaded from `.env`). This lets you keep secrets, tenant-specific endpoints, and private URLs out of the checked-in JSON file.
+
+Example:
 
 ```json
 {
-  "name": "LWN.net",
-  "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
-  "enabled": true
+  "ai": {
+    "base_url": "${HORIZON_AI_BASE_URL}"
+  },
+  "sources": {
+    "rss": [
+      {
+        "name": "LWN.net",
+        "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
+        "enabled": true
+      }
+    ]
+  },
+  "webhook": {
+    "url_env": "HORIZON_WEBHOOK_URL",
+    "headers": "Authorization: Bearer ${HORIZON_WEBHOOK_TOKEN}"
+  }
 }
 ```
 
-This way `config.json` can be committed to a public repo without leaking tokens.
+- `${NAME}` is replaced only when `NAME` is a valid identifier like `LWN_KEY` or `HORIZON_AI_BASE_URL`.
+- Unset variables are left as `${NAME}` instead of becoming an empty string, so configuration mistakes fail loudly downstream.
+- Expansion is recursive through dicts, lists, and tuples; non-string values are left unchanged.
 
 ## Email Subscription
 
@@ -272,6 +449,8 @@ Email delivery is optional and disabled unless `email.enabled` is `true`. Horizo
     "enabled": true,
     "smtp_server": "smtp.qq.com",
     "smtp_port": 465,
+    "smtp_username": null,
+    "imap_enabled": true,
     "imap_server": "imap.qq.com",
     "imap_port": 993,
     "email_address": "xxx@qq.com",
@@ -285,11 +464,34 @@ Email delivery is optional and disabled unless `email.enabled` is `true`. Horizo
 
 - `enabled`: Turns email subscription handling and daily email delivery on or off.
 - `smtp_server` / `smtp_port`: SMTP server used to send emails.
-- `imap_server` / `imap_port`: IMAP server used to scan incoming subscription requests.
+- `smtp_username`: Optional SMTP login username. If omitted, Horizon uses `email_address`.
+- `imap_enabled`: Turns IMAP subscribe/unsubscribe checks on or off. Set it to `false` for send-only SMTP providers.
+- `imap_server` / `imap_port`: IMAP server used to scan incoming subscription requests when `imap_enabled` is `true`.
 - `email_address`: Sender account and mailbox checked for subscription requests.
 - `password_env`: Environment variable containing the email password or app password. Defaults to `EMAIL_PASSWORD`.
 - `sender_name`: Display name shown in sent emails.
 - `subscribe_keyword` / `unsubscribe_keyword`: Keywords Horizon looks for in incoming email subjects.
+
+Resend SMTP example:
+
+```json
+{
+  "email": {
+    "enabled": true,
+    "smtp_server": "smtp.resend.com",
+    "smtp_port": 465,
+    "smtp_username": "resend",
+    "password_env": "RESEND_API_KEY",
+    "imap_enabled": false,
+    "imap_server": "",
+    "imap_port": 993,
+    "email_address": "noreply@example.com",
+    "sender_name": "Horizon Daily"
+  }
+}
+```
+
+Set `RESEND_API_KEY` in `.env`. Recipients are loaded from `data/subscribers.json`.
 
 ## Webhook Notification
 
@@ -326,6 +528,40 @@ Webhook notification is optional and disabled unless `webhook.enabled` is `true`
 - `headers`: Optional custom headers, one `Key: Value` pair per line.
 
 When `request_body` is a JSON object or array, Horizon renders placeholders and serializes it as JSON. When it is a string, Horizon renders it directly and detects JSON if the rendered string is valid JSON.
+
+### Delivery Modes And Layouts
+
+`delivery` controls how many webhook messages Horizon sends:
+
+- `summary`: Sends one message containing the full daily summary. This is simple, but some chat platforms may reject long messages.
+- `summary_and_items`: Sends one overview message plus one message per selected item. In each item message, `#{summary}` contains only that item's Markdown body. This is useful for platforms that reject or truncate long messages.
+
+`layout` controls how each message is rendered:
+
+- `markdown`: Uses your `request_body` template for each message. This is the default and works with generic webhooks, DingTalk, Slack, Discord, Feishu, and Lark.
+- `collapsible`: Currently supported for `platform: "feishu"` or `"lark"`. Horizon ignores `request_body` and builds one Feishu/Lark Card JSON 2.0 message with each item in a collapsed panel.
+
+For platforms without a platform-specific layout, keep `layout: "markdown"` and choose the message count with `delivery`.
+
+Example `summary_and_items` Markdown delivery config:
+
+```json
+{
+  "webhook": {
+    "enabled": true,
+    "url_env": "HORIZON_WEBHOOK_URL",
+    "delivery": "summary_and_items",
+    "overview_position": "last",
+    "platform": "generic",
+    "layout": "markdown",
+    "request_body": {
+      "text": "#{message_title}\n\n#{summary?limit=3000&split=---}"
+    }
+  }
+}
+```
+
+With `summary_and_items`, Horizon sends one overview plus one message per selected item. `overview_position: "last"` sends item messages first and keeps the overview as the newest chat message; omit it or set `"first"` to send the overview first.
 
 ### Webhook Templates
 

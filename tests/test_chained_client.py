@@ -171,7 +171,7 @@ def test_create_chained_client_parses_chain():
     assert len(chained.configs) == 2
     assert chained.configs[0].provider == AIProvider.OPENROUTER
     assert chained.configs[1].provider == AIProvider.SENSENOVA
-    assert chained.configs[1].model == "DeepSeek-V3-1"
+    assert chained.configs[1].model == "sensenova-6.7-flash-lite"
     assert chained.configs[1].api_key_env == "SENSENOVA_API_KEY"
 
 

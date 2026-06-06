@@ -55,3 +55,42 @@ def test_analyze_batch_sleeps_between_items_when_throttle_configured(monkeypatch
     asyncio.run(analyzer.analyze_batch(items))
 
     assert sleep_calls == [1.5, 1.5]
+
+
+def test_analyze_batch_concurrent_processing(monkeypatch):
+    """Verify that higher concurrency allows overlapping item processing."""
+    client = SimpleNamespace(config=SimpleNamespace(analysis_concurrency=3))
+    analyzer = ContentAnalyzer(client)
+    items = [_make_item(f"rss:test:{i}") for i in range(5)]
+    active_count = 0
+    max_active = 0
+
+    async def fake_analyze_item(item):
+        nonlocal active_count, max_active
+        active_count += 1
+        max_active = max(max_active, active_count)
+        await asyncio.sleep(0.05)  # Small delay to allow overlap
+        active_count -= 1
+
+    monkeypatch.setattr(analyzer, "_analyze_item", fake_analyze_item)
+
+    asyncio.run(analyzer.analyze_batch(items))
+
+    assert max_active == 3
+    assert all(item.ai_score is None for item in items)  # None because fake_analyze_item doesn't set it
+
+
+def test_analyze_batch_concurrent_preserves_order(monkeypatch):
+    """Verify that analyze_batch preserves input order in results."""
+    client = SimpleNamespace(config=SimpleNamespace(analysis_concurrency=3))
+    analyzer = ContentAnalyzer(client)
+    items = [_make_item(f"rss:test:{i}") for i in range(5)]
+
+    async def fake_analyze_item(item):
+        item.ai_score = float(item.id.split(":")[-1]) * 10
+
+    monkeypatch.setattr(analyzer, "_analyze_item", fake_analyze_item)
+
+    result = asyncio.run(analyzer.analyze_batch(items))
+
+    assert [item.id for item in result] == [item.id for item in items]
