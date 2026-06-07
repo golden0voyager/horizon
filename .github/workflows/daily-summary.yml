@@ -31,6 +31,17 @@ jobs:
       - name: Install Playwright browsers
         run: uv run playwright install chromium
 
+      - name: Prepare GitHub Actions config
+        run: |
+          # Copy and strip JSON comments (json.load doesn't support // comments)
+          python3 -c "
+import json, re
+with open('data/config.github.json') as f:
+    text = re.sub(r'^\s*//.*$', '', f.read(), flags=re.MULTILINE)
+with open('data/config.json', 'w') as f:
+    json.dump(json.loads(text), f, indent=2)
+"
+
       - name: Prepare Twitter cookies
         run: |
           mkdir -p data
