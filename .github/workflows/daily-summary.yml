@@ -2,8 +2,8 @@ name: Daily Horizon Summary
 
 on:
   schedule:
-    - cron: '0 23 * * *'  # 每天北京时间早上 7:00 运行 (UTC 23:00)
-  workflow_dispatch:      # 允许手动触发执行
+    - cron: '0 23 * * *'
+  workflow_dispatch:
 
 jobs:
   daily-summary:
