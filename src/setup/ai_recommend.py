@@ -1,7 +1,6 @@
 """AI-powered source recommendation for the setup wizard."""
 
 import asyncio
-from typing import List, Dict, Optional
 
 from ..ai.client import create_ai_client
 from ..ai.utils import parse_json_response
@@ -12,8 +11,8 @@ from .prompts import RECOMMEND_SYSTEM, RECOMMEND_USER
 async def get_ai_recommendations(
     ai_config: AIConfig,
     interests: str,
-    existing_sources: List[Dict],
-) -> List[Dict]:
+    existing_sources: list[dict],
+) -> list[dict]:
     """Ask AI to recommend additional sources beyond presets.
 
     Args:
@@ -64,7 +63,7 @@ async def get_ai_recommendations(
 def get_ai_recommendations_sync(
     ai_config: AIConfig,
     interests: str,
-    existing_sources: List[Dict],
-) -> List[Dict]:
+    existing_sources: list[dict],
+) -> list[dict]:
     """Synchronous wrapper for get_ai_recommendations."""
     return asyncio.run(get_ai_recommendations(ai_config, interests, existing_sources))

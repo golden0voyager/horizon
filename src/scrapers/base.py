@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Optional
+
 import httpx
 
 from ..models import ContentItem
@@ -11,7 +11,7 @@ from ..models import ContentItem
 class BaseScraper(ABC):
     """Abstract base class for all scrapers."""
 
-    def __init__(self, config: dict, http_client: Optional[httpx.AsyncClient] = None):
+    def __init__(self, config: dict, http_client: httpx.AsyncClient | None = None):
         """Initialize scraper.
 
         Args:
@@ -22,7 +22,7 @@ class BaseScraper(ABC):
         self.client = http_client
 
     @abstractmethod
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         """Fetch content items published since the given time.
 
         Args:

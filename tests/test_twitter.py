@@ -1,7 +1,7 @@
 """Tests for TwitterScraper."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -10,13 +10,13 @@ from src.scrapers.twitter import TwitterScraper
 
 
 def _make_config(**kwargs) -> TwitterConfig:
-    defaults = dict(
-        enabled=True,
-        users=["karpathy"],
-        fetch_limit=3,
-        actor_id="altimis~scweet",
-        apify_token_env="APIFY_TOKEN",
-    )
+    defaults = {
+        "enabled": True,
+        "users": ["karpathy"],
+        "fetch_limit": 3,
+        "actor_id": "altimis~scweet",
+        "apify_token_env": "APIFY_TOKEN",
+    }
     defaults.update(kwargs)
     return TwitterConfig(**defaults)
 
@@ -30,7 +30,7 @@ def _tweet(
     **extra,
 ) -> dict:
     if created_at is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         created_at = now.strftime("%a %b %d %H:%M:%S +0000 %Y")
     return {
         "id_str": tweet_id,
@@ -51,7 +51,7 @@ def _reply_row(
     text: str = "Great point!",
     likes: int = 5,
 ) -> dict:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return {
         "id": f"tweet-{tweet_id}",
         "handle": handle,
@@ -80,7 +80,7 @@ def test_disabled_returns_empty():
     client = httpx.AsyncClient(transport=transport)
     result = asyncio.run(
         TwitterScraper(_make_config(enabled=False), client).fetch(
-            datetime.now(timezone.utc)
+            datetime.now(UTC)
         )
     )
     asyncio.run(client.aclose())
@@ -92,7 +92,7 @@ def test_no_users_returns_empty():
     client = httpx.AsyncClient(transport=transport)
     result = asyncio.run(
         TwitterScraper(_make_config(users=[]), client).fetch(
-            datetime.now(timezone.utc)
+            datetime.now(UTC)
         )
     )
     asyncio.run(client.aclose())
@@ -104,7 +104,7 @@ def test_missing_token_returns_empty(monkeypatch):
     transport = httpx.MockTransport(lambda r: httpx.Response(200, json=[]))
     client = httpx.AsyncClient(transport=transport)
     result = asyncio.run(
-        TwitterScraper(_make_config(), client).fetch(datetime.now(timezone.utc))
+        TwitterScraper(_make_config(), client).fetch(datetime.now(UTC))
     )
     asyncio.run(client.aclose())
     assert result == []
@@ -112,7 +112,7 @@ def test_missing_token_returns_empty(monkeypatch):
 
 def test_successful_fetch_returns_items(monkeypatch):
     monkeypatch.setenv("APIFY_TOKEN", "test_token")
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    since = datetime.now(UTC) - timedelta(hours=1)
     tweets = [_tweet("1"), _tweet("2", text="Another tweet")]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -137,7 +137,7 @@ def test_successful_fetch_returns_items(monkeypatch):
 def test_metadata_keys_aligned_for_analyzer(monkeypatch):
     """Analyzer reads favorite_count/retweet_count/reply_count — verify they are set."""
     monkeypatch.setenv("APIFY_TOKEN", "test_token")
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    since = datetime.now(UTC) - timedelta(hours=1)
     tweets = [_tweet("42", **{"favorite_count": 99, "retweet_count": 7, "reply_count": 3})]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -165,7 +165,7 @@ def test_metadata_keys_aligned_for_analyzer(monkeypatch):
 
 def test_filters_old_tweets(monkeypatch):
     monkeypatch.setenv("APIFY_TOKEN", "test_token")
-    since = datetime.now(timezone.utc)
+    since = datetime.now(UTC)
     old = (since - timedelta(hours=2)).strftime("%a %b %d %H:%M:%S +0000 %Y")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -198,7 +198,7 @@ def test_run_failure_returns_empty(monkeypatch):
     client = httpx.AsyncClient(transport=transport)
     result = asyncio.run(
         TwitterScraper(_make_config(), client).fetch(
-            datetime.now(timezone.utc) - timedelta(hours=1)
+            datetime.now(UTC) - timedelta(hours=1)
         )
     )
     asyncio.run(client.aclose())
@@ -211,7 +211,7 @@ def test_start_run_http_error_returns_empty(monkeypatch):
     client = httpx.AsyncClient(transport=transport)
     result = asyncio.run(
         TwitterScraper(_make_config(), client).fetch(
-            datetime.now(timezone.utc) - timedelta(hours=1)
+            datetime.now(UTC) - timedelta(hours=1)
         )
     )
     asyncio.run(client.aclose())
@@ -220,7 +220,7 @@ def test_start_run_http_error_returns_empty(monkeypatch):
 
 def test_no_results_item_skipped(monkeypatch):
     monkeypatch.setenv("APIFY_TOKEN", "test_token")
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    since = datetime.now(UTC) - timedelta(hours=1)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if "/runs" in request.url.path and request.method == "POST":
@@ -242,9 +242,9 @@ def test_no_results_item_skipped(monkeypatch):
 
 def test_iso_date_fallback(monkeypatch):
     monkeypatch.setenv("APIFY_TOKEN", "test_token")
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    since = datetime.now(UTC) - timedelta(hours=1)
     iso_tweet = _tweet("77")
-    iso_tweet["created_at"] = datetime.now(timezone.utc).isoformat()
+    iso_tweet["created_at"] = datetime.now(UTC).isoformat()
 
     def handler(request: httpx.Request) -> httpx.Response:
         if "/runs" in request.url.path and request.method == "POST":
@@ -264,7 +264,7 @@ def test_iso_date_fallback(monkeypatch):
 
 def test_url_constructed_when_missing(monkeypatch):
     monkeypatch.setenv("APIFY_TOKEN", "test_token")
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    since = datetime.now(UTC) - timedelta(hours=1)
     tweet = _tweet("55", screen_name="testuser")
     tweet.pop("url", None)
 
@@ -330,8 +330,9 @@ def test_fetch_replies_appends_top_comments(monkeypatch):
     )
     scraper = TwitterScraper(cfg, client)
 
+    from datetime import datetime
+
     from src.models import ContentItem, SourceType
-    from datetime import datetime, timezone
 
     item = ContentItem(
         id="twitter:tweet:42",
@@ -340,7 +341,7 @@ def test_fetch_replies_appends_top_comments(monkeypatch):
         url="https://twitter.com/karpathy/status/42",
         content="test tweet body",
         author="Andrej Karpathy",
-        published_at=datetime.now(timezone.utc),
+        published_at=datetime.now(UTC),
         metadata={"tweet_id": "42", "conversation_id": "42"},
     )
 
@@ -353,7 +354,7 @@ def test_fetch_replies_appends_top_comments(monkeypatch):
     assert "alice" in reply_lines[0]
     assert "Interesting take!" in reply_lines[0]
     # dave (0 likes) filtered out
-    assert not any("dave" in l for l in reply_lines)
+    assert not any("dave" in line for line in reply_lines)
 
 
 def test_append_discussion_content_adds_marker():
@@ -366,7 +367,7 @@ def test_append_discussion_content_adds_marker():
         url="https://twitter.com/x/status/1",
         content="original text",
         author="x",
-        published_at=datetime.now(timezone.utc),
+        published_at=datetime.now(UTC),
         metadata={},
     )
     changed = TwitterScraper.append_discussion_content(item, ["[@alice | ❤️ 5 | 💬 1] reply text"])
@@ -385,7 +386,7 @@ def test_append_discussion_content_empty_lines_no_change():
         url="https://twitter.com/x/status/2",
         content="original",
         author="x",
-        published_at=datetime.now(timezone.utc),
+        published_at=datetime.now(UTC),
         metadata={},
     )
     changed = TwitterScraper.append_discussion_content(item, [])
@@ -409,7 +410,7 @@ def test_fetch_replies_no_conversation_id_returns_empty(monkeypatch):
         url="https://twitter.com/x/status/x",
         content="body",
         author="x",
-        published_at=datetime.now(timezone.utc),
+        published_at=datetime.now(UTC),
         metadata={},  # no conversation_id
     )
     result = asyncio.run(scraper.fetch_replies_for_item(item))

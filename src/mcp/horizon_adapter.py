@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 
 from .errors import HorizonMcpError
 
-
 VALID_SOURCES = {
     "github",
     "hackernews",

@@ -1,10 +1,8 @@
 """Daily summary generation — pure programmatic rendering."""
 
 import re
-from typing import List, Dict
 
 from ..models import ContentItem
-
 
 _CJK = r"[\u4e00-\u9fff\u3400-\u4dbf]"
 _ASCII = r"[A-Za-z0-9]"
@@ -69,7 +67,7 @@ class DailySummarizer:
 
     async def generate_summary(
         self,
-        items: List[ContentItem],
+        items: list[ContentItem],
         date: str,
         total_fetched: int,
         language: str = "en",
@@ -115,7 +113,7 @@ class DailySummarizer:
 
     def generate_webhook_overview(
         self,
-        items: List[ContentItem],
+        items: list[ContentItem],
         date: str,
         total_fetched: int,
         language: str = "en",

@@ -8,12 +8,10 @@ and transformed internally to the preset format that match_domains() expects.
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import httpx
 
 from .tag_aliases import get_tag_aliases
-
 
 API_BASE_URL = os.environ.get(
     "HORIZON_API_URL", "https://horizon1123.top"
@@ -22,7 +20,7 @@ PRESETS_ENDPOINT = f"{API_BASE_URL}/api/presets"
 REQUEST_TIMEOUT = 10  # seconds
 
 
-def fetch_presets() -> Optional[Dict]:
+def fetch_presets() -> dict | None:
     """Fetch presets from the horizon-site API.
 
     Returns:
@@ -47,7 +45,7 @@ def fetch_presets() -> Optional[Dict]:
         return None
 
 
-def _transform_api_response(api_data: Dict) -> Dict:
+def _transform_api_response(api_data: dict) -> dict:
     """Transform horizon-site API response to the internal preset format.
 
     The API returns data in horizon-site's format (Category enum IDs like
@@ -101,7 +99,7 @@ def _transform_api_response(api_data: Dict) -> Dict:
 def load_presets(
     presets_path: str = "data/presets.json",
     prefer_api: bool = True,
-) -> Dict:
+) -> dict:
     """Load presets from API (preferred) or local file (fallback).
 
     Args:
@@ -130,15 +128,15 @@ def load_presets(
             f"or ensure {presets_path} exists."
         )
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
 def match_domains(
     user_input: str,
-    presets: Dict,
+    presets: dict,
     threshold: float = 0.1,
-) -> List[Tuple[Dict, float]]:
+) -> list[tuple[dict, float]]:
     """Match user interest description against preset domains.
 
     Performs case-insensitive keyword matching against domain keywords and
@@ -179,8 +177,8 @@ def match_domains(
 
 
 def collect_sources_from_domains(
-    matched_domains: List[Tuple[Dict, float]],
-) -> List[Dict]:
+    matched_domains: list[tuple[dict, float]],
+) -> list[dict]:
     """Flatten matched domains into a deduplicated list of source configs.
 
     Args:
@@ -216,9 +214,9 @@ def _tag_matches_input(tag: str, tokens: set, input_lower: str) -> bool:
 
 def match_sources(
     user_input: str,
-    presets: Dict,
+    presets: dict,
     threshold: float = 0.1,
-) -> List[Tuple[Dict, float]]:
+) -> list[tuple[dict, float]]:
     """Match user interest description against individual sources.
 
     Scores each source based on:
@@ -278,7 +276,7 @@ def match_sources(
     return results
 
 
-def _source_unique_key(source: Dict) -> str:
+def _source_unique_key(source: dict) -> str:
     """Generate a unique key for a source to enable deduplication."""
     src_type = source.get("type", "")
     cfg = source.get("config", {})

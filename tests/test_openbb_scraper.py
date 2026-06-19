@@ -14,7 +14,7 @@ verify that:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -61,7 +61,7 @@ def _news_row(
     symbols: object = "NVDA",
 ) -> SimpleNamespace:
     if date is _SENTINEL:
-        date = datetime.now(timezone.utc)
+        date = datetime.now(UTC)
     return SimpleNamespace(
         title=title,
         url=url,
@@ -76,14 +76,14 @@ def _news_row(
 class TestFetchGuards:
     def test_returns_empty_when_obb_not_installed(self):
         scraper = _make_scraper(_cfg(), obb=None)
-        since = datetime.now(timezone.utc) - timedelta(days=1)
+        since = datetime.now(UTC) - timedelta(days=1)
         result = asyncio.run(scraper.fetch(since))
         assert result == []
 
     def test_returns_empty_when_disabled(self):
         obb = MagicMock()
         scraper = _make_scraper(_cfg(enabled=False), obb=obb)
-        since = datetime.now(timezone.utc) - timedelta(days=1)
+        since = datetime.now(UTC) - timedelta(days=1)
         assert asyncio.run(scraper.fetch(since)) == []
         obb.news.company.assert_not_called()
 
@@ -97,7 +97,7 @@ class TestFetchGuards:
             ],
         )
         scraper = _make_scraper(cfg, obb=obb)
-        since = datetime.now(timezone.utc) - timedelta(days=1)
+        since = datetime.now(UTC) - timedelta(days=1)
         assert asyncio.run(scraper.fetch(since)) == []
         obb.news.company.assert_not_called()
 
@@ -108,14 +108,14 @@ class TestFetchGuards:
             watchlists=[OpenBBWatchlist(name="empty", symbols=[])],
         )
         scraper = _make_scraper(cfg, obb=obb)
-        since = datetime.now(timezone.utc) - timedelta(days=1)
+        since = datetime.now(UTC) - timedelta(days=1)
         assert asyncio.run(scraper.fetch(since)) == []
         obb.news.company.assert_not_called()
 
 
 class TestMapping:
     def test_maps_single_news_row_into_content_item(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(
             results=[_news_row(date=now, symbols="NVDA,AAPL")]
@@ -136,7 +136,7 @@ class TestMapping:
         assert item.id.startswith("openbb:news:")
 
     def test_passes_comma_joined_symbols_to_openbb(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(results=[])
         scraper = _make_scraper(_cfg(), obb=obb)
@@ -149,7 +149,7 @@ class TestMapping:
         assert call_kwargs["limit"] == 5
 
     def test_falls_back_to_watchlist_symbols_when_row_has_none(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(
             results=[_news_row(date=now, symbols="")]
@@ -159,7 +159,7 @@ class TestMapping:
         assert result[0].metadata["symbols"] == ["AAPL", "NVDA"]
 
     def test_parses_iso_string_date(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         iso = now.isoformat().replace("+00:00", "Z")
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(
@@ -173,7 +173,7 @@ class TestMapping:
 
 class TestFiltering:
     def test_drops_items_older_than_since(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         old = now - timedelta(days=3)
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(
@@ -184,7 +184,7 @@ class TestFiltering:
         assert result == []
 
     def test_deduplicates_across_watchlists_by_url(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         shared_url = "https://finance.yahoo.com/articles/abc"
         cfg = OpenBBConfig(
             enabled=True,
@@ -204,7 +204,7 @@ class TestFiltering:
         assert obb.news.company.call_count == 2
 
     def test_handles_empty_results(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(results=[])
         scraper = _make_scraper(_cfg(), obb=obb)
@@ -213,7 +213,7 @@ class TestFiltering:
 
 class TestResilience:
     def test_malformed_row_missing_url_is_skipped(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(
             results=[
@@ -226,7 +226,7 @@ class TestResilience:
         assert len(result) == 1
 
     def test_malformed_row_missing_title_is_skipped(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(
             results=[_news_row(title="", date=now)]
@@ -235,7 +235,7 @@ class TestResilience:
         assert asyncio.run(scraper.fetch(now - timedelta(hours=1))) == []
 
     def test_malformed_row_missing_date_is_skipped(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         obb = MagicMock()
         obb.news.company.return_value = SimpleNamespace(
             results=[_news_row(date=None)]
@@ -244,7 +244,7 @@ class TestResilience:
         assert asyncio.run(scraper.fetch(now - timedelta(hours=1))) == []
 
     def test_watchlist_exception_does_not_block_others(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cfg = OpenBBConfig(
             enabled=True,
             watchlists=[
@@ -283,7 +283,7 @@ class TestStatic:
     def test_ensure_utc_other_tz(self):
         other = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone(timedelta(hours=8)))
         out = OpenBBScraper._ensure_utc(other)
-        assert out.tzinfo == timezone.utc
+        assert out.tzinfo == UTC
         assert out.hour == 4
 
     def test_coerce_datetime_handles_bogus(self):

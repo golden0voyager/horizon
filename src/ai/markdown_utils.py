@@ -4,7 +4,6 @@ import html
 import re
 from urllib.parse import urlsplit
 
-
 _DETAILS_RE = re.compile(
     r"<details>\s*<summary>(.*?)</summary>\s*(.*?)\s*</details>",
     re.IGNORECASE | re.DOTALL,

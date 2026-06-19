@@ -1,7 +1,6 @@
 """Search HN Algolia and Reddit for related stories."""
 
 import asyncio
-from typing import List, Dict
 
 import httpx
 
@@ -13,7 +12,7 @@ REDDIT_SEARCH_URL = "https://www.reddit.com/search.json"
 _reddit_semaphore = asyncio.Semaphore(5)
 
 
-async def search_hn(query: str, client: httpx.AsyncClient) -> List[dict]:
+async def search_hn(query: str, client: httpx.AsyncClient) -> list[dict]:
     """Search HN Algolia. Returns list of {title, url, source, score, num_comments, date}."""
     params = {"query": query, "tags": "story", "hitsPerPage": 3}
     try:
@@ -36,7 +35,7 @@ async def search_hn(query: str, client: httpx.AsyncClient) -> List[dict]:
     return results
 
 
-async def search_reddit(query: str, client: httpx.AsyncClient) -> List[dict]:
+async def search_reddit(query: str, client: httpx.AsyncClient) -> list[dict]:
     """Search Reddit JSON API. Returns list of {title, url, source, score, num_comments, subreddit, date}."""
     params = {"q": query, "sort": "relevance", "limit": 3, "t": "year"}
     headers = {"User-Agent": "Horizon/1.0 (tech news aggregator)"}
@@ -64,8 +63,8 @@ async def search_reddit(query: str, client: httpx.AsyncClient) -> List[dict]:
 
 
 async def search_related(
-    items: List[ContentItem], client: httpx.AsyncClient
-) -> Dict[str, List[dict]]:
+    items: list[ContentItem], client: httpx.AsyncClient
+) -> dict[str, list[dict]]:
     """Search HN + Reddit for each item concurrently.
 
     Returns {item.id: [related_stories]}.
@@ -97,7 +96,7 @@ async def search_related(
     tasks = [_search_for_item(item) for item in items]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    mapping: Dict[str, List[dict]] = {}
+    mapping: dict[str, list[dict]] = {}
     for result in results:
         if isinstance(result, Exception):
             continue

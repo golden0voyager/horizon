@@ -1,7 +1,9 @@
 import json
+
 import pytest
-from pathlib import Path
-from src.storage.manager import StorageManager, ConfigError, _expand_env_vars
+
+from src.storage.manager import ConfigError, StorageManager, _expand_env_vars
+
 
 def test_load_config_missing_file(tmp_path):
     storage = StorageManager(data_dir=str(tmp_path))
@@ -11,7 +13,7 @@ def test_load_config_missing_file(tmp_path):
 def test_load_config_invalid_json(tmp_path):
     config_path = tmp_path / "config.json"
     config_path.write_text("invalid json", encoding="utf-8")
-    
+
     storage = StorageManager(data_dir=str(tmp_path))
     with pytest.raises(ConfigError) as excinfo:
         storage.load_config()
@@ -22,7 +24,7 @@ def test_load_config_validation_failure(tmp_path):
     config_path = tmp_path / "config.json"
     # Missing required 'ai' and 'sources' fields
     config_path.write_text(json.dumps({"version": "1.0"}), encoding="utf-8")
-    
+
     storage = StorageManager(data_dir=str(tmp_path))
     with pytest.raises(ConfigError) as excinfo:
         storage.load_config()
@@ -47,7 +49,7 @@ def test_load_config_success(tmp_path):
         }
     }
     config_path.write_text(json.dumps(config_data), encoding="utf-8")
-    
+
     storage = StorageManager(data_dir=str(tmp_path))
     config = storage.load_config()
     assert config.version == "1.0"

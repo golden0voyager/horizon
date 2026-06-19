@@ -4,14 +4,13 @@ import asyncio
 import calendar
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, List, Optional, cast
+from typing import Any, cast
 
 import feedparser
 import httpx
 
-from .base import BaseScraper
 from ..models import (
     ContentItem,
     RedditConfig,
@@ -19,6 +18,7 @@ from ..models import (
     RedditUserConfig,
     SourceType,
 )
+from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class RedditScraper(BaseScraper):
         user_agent = getattr(config, "user_agent", None) or USER_AGENT
         self._headers = {**REDDIT_HEADERS, "User-Agent": user_agent}
 
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         if not self.config.get("enabled", True):
             return []
 
@@ -77,7 +77,7 @@ class RedditScraper(BaseScraper):
 
     async def _fetch_subreddit(
         self, cfg: RedditSubredditConfig, since: datetime
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         params: dict[str, Any] = {"limit": min(cfg.fetch_limit, 100), "raw_json": 1}
         if cfg.sort in ("top", "controversial"):
             params["t"] = cfg.time_filter
@@ -105,7 +105,7 @@ class RedditScraper(BaseScraper):
 
     async def _fetch_subreddit_rss(
         self, cfg: RedditSubredditConfig, since: datetime
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         rss_url = f"{REDDIT_BASE}/r/{cfg.subreddit}/{cfg.sort}/.rss"
 
         try:
@@ -161,7 +161,7 @@ class RedditScraper(BaseScraper):
 
     async def _fetch_user(
         self, cfg: RedditUserConfig, since: datetime
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         params: dict[str, Any] = {
             "limit": min(cfg.fetch_limit, 100),
             "sort": cfg.sort,
@@ -188,14 +188,14 @@ class RedditScraper(BaseScraper):
         subtype: str,
         source_name: str,
         min_score: int,
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         valid_posts = []
         comment_tasks = []
         fetch_comments = self.reddit_config.fetch_comments
 
         for post in posts:
             created = datetime.fromtimestamp(
-                post.get("created_utc", 0), tz=timezone.utc
+                post.get("created_utc", 0), tz=UTC
             )
             if created < since:
                 continue
@@ -215,31 +215,31 @@ class RedditScraper(BaseScraper):
         all_comments = await asyncio.gather(*comment_tasks, return_exceptions=True)
 
         items = []
-        for post, comments in zip(valid_posts, all_comments):
+        for post, comments in zip(valid_posts, all_comments, strict=False):
             if isinstance(comments, Exception):
                 comments = []
-            item = self._parse_post(post, cast(List[dict], comments), subtype)
+            item = self._parse_post(post, cast(list[dict], comments), subtype)
             if item:
                 items.append(item)
         return items
 
     @staticmethod
-    async def _empty_comments() -> List[dict]:
+    async def _empty_comments() -> list[dict]:
         return []
 
     @staticmethod
-    def _parse_rss_date(entry: dict) -> Optional[datetime]:
+    def _parse_rss_date(entry: dict) -> datetime | None:
         for field in ["published", "updated", "created"]:
             parsed_field = f"{field}_parsed"
             if parsed_field in entry and entry[parsed_field]:
                 return datetime.fromtimestamp(
-                    calendar.timegm(entry[parsed_field]), tz=timezone.utc
+                    calendar.timegm(entry[parsed_field]), tz=UTC
                 )
             if field in entry:
                 try:
                     parsed = parsedate_to_datetime(entry[field])
                     if parsed.tzinfo is None:
-                        parsed = parsed.replace(tzinfo=timezone.utc)
+                        parsed = parsed.replace(tzinfo=UTC)
                     return parsed
                 except Exception:
                     continue
@@ -250,7 +250,7 @@ class RedditScraper(BaseScraper):
         text = re.sub(r"<[^>]+>", " ", value)
         return re.sub(r"\s+", " ", text).strip()
 
-    async def _fetch_comments(self, subreddit: str, post_id: str) -> List[dict]:
+    async def _fetch_comments(self, subreddit: str, post_id: str) -> list[dict]:
         fetch_limit = self.reddit_config.fetch_comments
         url = f"{REDDIT_BASE}/r/{subreddit}/comments/{post_id}.json"
         params = {"limit": fetch_limit, "depth": 1, "sort": "top", "raw_json": 1}
@@ -265,15 +265,15 @@ class RedditScraper(BaseScraper):
             if child.get("kind") != "t1":
                 continue
             c = child["data"]
-            if c.get("body") and not c.get("distinguished") == "moderator":
+            if c.get("body") and c.get("distinguished") != "moderator":
                 comments.append(c)
 
         comments.sort(key=lambda c: c.get("score", 0), reverse=True)
         return comments[:fetch_limit]
 
     def _parse_post(
-        self, post: dict, comments: List[dict], subtype: str
-    ) -> Optional[ContentItem]:
+        self, post: dict, comments: list[dict], subtype: str
+    ) -> ContentItem | None:
         post_id = post["id"]
         title = post.get("title", "")
         is_self = post.get("is_self", False)
@@ -284,7 +284,7 @@ class RedditScraper(BaseScraper):
         url = discussion_url if is_self else post.get("url", discussion_url)
 
         author = post.get("author", "unknown")
-        created = datetime.fromtimestamp(post.get("created_utc", 0), tz=timezone.utc)
+        created = datetime.fromtimestamp(post.get("created_utc", 0), tz=UTC)
 
         # Build content
         parts = []
@@ -326,7 +326,7 @@ class RedditScraper(BaseScraper):
             },
         )
 
-    async def _reddit_get(self, url: str, params: dict) -> Optional[Any]:
+    async def _reddit_get(self, url: str, params: dict) -> Any | None:
         try:
             response = await self.client.get(
                 url,

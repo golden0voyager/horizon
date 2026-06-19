@@ -1,7 +1,7 @@
 """Unit tests for daily summary rendering."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.ai.summarizer import DailySummarizer
 from src.models import ContentItem, SourceType
@@ -19,7 +19,7 @@ def _make_item(idx: int) -> ContentItem:
         url=f"https://example.com/items/{idx}",
         content="content",
         author="tester",
-        published_at=datetime(2026, 4, 25, 8, 0, tzinfo=timezone.utc),
+        published_at=datetime(2026, 4, 25, 8, 0, tzinfo=UTC),
     )
     item.ai_score = 8.0
     item.ai_summary = f"Summary for item {idx}."

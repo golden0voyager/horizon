@@ -3,11 +3,11 @@
 import logging
 import os
 from datetime import datetime
-from typing import List, Optional
+
 import httpx
 
+from ..models import ContentItem, GitHubSourceConfig, SourceType
 from .base import BaseScraper
-from ..models import ContentItem, SourceType, GitHubSourceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class GitHubScraper(BaseScraper):
     """Scraper for GitHub events and releases."""
 
-    def __init__(self, sources: List[GitHubSourceConfig], http_client: httpx.AsyncClient):
+    def __init__(self, sources: list[GitHubSourceConfig], http_client: httpx.AsyncClient):
         """Initialize GitHub scraper.
 
         Args:
@@ -40,7 +40,7 @@ class GitHubScraper(BaseScraper):
             headers["Authorization"] = f"token {self.token}"
         return headers
 
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         """Fetch GitHub content items.
 
         Args:
@@ -71,7 +71,7 @@ class GitHubScraper(BaseScraper):
         self,
         username: str,
         since: datetime
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         """Fetch public events for a user.
 
         Args:
@@ -114,7 +114,7 @@ class GitHubScraper(BaseScraper):
 
         return items
 
-    def _parse_event(self, event: dict, username: str) -> Optional[ContentItem]:
+    def _parse_event(self, event: dict, username: str) -> ContentItem | None:
         """Parse GitHub event into ContentItem.
 
         Args:
@@ -173,7 +173,7 @@ class GitHubScraper(BaseScraper):
         owner: str,
         repo: str,
         since: datetime
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         """Fetch releases for a repository.
 
         Args:

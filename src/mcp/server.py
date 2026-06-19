@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from time import perf_counter
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from .errors import HorizonMcpError
 from .service import HorizonPipelineService
 
-
 mcp = FastMCP(name="horizon-mcp")
 service = HorizonPipelineService()
 
-SERVER_STARTED_AT = datetime.now(timezone.utc).isoformat()
+SERVER_STARTED_AT = datetime.now(UTC).isoformat()
 METRICS: dict[str, Any] = {
     "started_at": SERVER_STARTED_AT,
     "tool_calls_total": 0,
@@ -34,7 +34,7 @@ def _ok(tool: str, data: dict[str, Any], duration_ms: float | None = None) -> di
         "tool": tool,
         "data": data,
         "meta": {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     }
     if duration_ms is not None:
@@ -61,7 +61,7 @@ def _err(tool: str, error: Exception, duration_ms: float | None = None) -> dict[
             "details": details,
         },
         "meta": {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         },
     }
     if duration_ms is not None:
@@ -87,7 +87,7 @@ def _record_metrics(tool: str, ok: bool, duration_ms: float, error_code: str | N
         METRICS["last_error"] = {
             "tool": tool,
             "code": error_code,
-            "at": datetime.now(timezone.utc).isoformat(),
+            "at": datetime.now(UTC).isoformat(),
         }
 
 
@@ -120,7 +120,7 @@ def _resource_result(resource: str, loader: Callable[[], Any]) -> dict[str, Any]
 
 def _metrics_snapshot() -> dict[str, Any]:
     uptime_seconds = (
-        datetime.now(timezone.utc) - datetime.fromisoformat(METRICS["started_at"])
+        datetime.now(UTC) - datetime.fromisoformat(METRICS["started_at"])
     ).total_seconds()
     return {
         **METRICS,

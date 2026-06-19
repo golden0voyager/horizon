@@ -1,13 +1,31 @@
 """Main orchestrator coordinating the entire workflow."""
 
 import asyncio
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict
-from urllib.parse import urlparse
-import httpx
 import os
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlparse
+
+import httpx
 from rich.console import Console
+
+from .ai.analyzer import ContentAnalyzer
+from .ai.client import create_ai_client
+from .ai.enricher import ContentEnricher
+from .ai.summarizer import DailySummarizer
+from .ai.tokens import get_usage_snapshot
+from .models import Config, ContentItem
+from .scrapers.github import GitHubScraper
+from .scrapers.hackernews import HackerNewsScraper
+from .scrapers.openbb import OpenBBScraper
+from .scrapers.ossinsight import OSSInsightScraper
+from .scrapers.reddit import RedditScraper
+from .scrapers.rss import RSSScraper
+from .scrapers.telegram import TelegramScraper
+from .scrapers.twitter import TwitterScraper
+from .services.email import EmailManager
+from .services.webhook import WebhookNotifier
+from .storage.manager import StorageManager
 
 
 def _resolve_proxy() -> str:
@@ -17,24 +35,6 @@ def _resolve_proxy() -> str:
         if val:
             return val
     return ""
-
-from .models import Config, ContentItem
-from .storage.manager import StorageManager
-from .services.email import EmailManager
-from .services.webhook import WebhookNotifier
-from .scrapers.github import GitHubScraper
-from .scrapers.hackernews import HackerNewsScraper
-from .scrapers.rss import RSSScraper
-from .scrapers.reddit import RedditScraper
-from .scrapers.telegram import TelegramScraper
-from .scrapers.twitter import TwitterScraper
-from .scrapers.openbb import OpenBBScraper
-from .scrapers.ossinsight import OSSInsightScraper
-from .ai.client import create_ai_client
-from .ai.analyzer import ContentAnalyzer
-from .ai.summarizer import DailySummarizer
-from .ai.enricher import ContentEnricher
-from .ai.tokens import get_usage_snapshot
 
 
 class HorizonOrchestrator:
@@ -125,7 +125,7 @@ class HorizonOrchestrator:
             await self._expand_twitter_discussion(important_items)
 
             # Show per-sub-source selection breakdown
-            selected_counts: Dict[str, int] = defaultdict(int)
+            selected_counts: dict[str, int] = defaultdict(int)
             for item in important_items:
                 key = f"{item.source_type.value}/{self._sub_source_label(item)}"
                 selected_counts[key] += 1
@@ -137,7 +137,7 @@ class HorizonOrchestrator:
             await self._enrich_important_items(important_items)
 
             # 7. Generate and save daily summaries for each configured language
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today = datetime.now(UTC).strftime("%Y-%m-%d")
             for lang in self.config.ai.languages:
                 summarizer = DailySummarizer()
                 summary = await summarizer.generate_summary(important_items, today, len(all_items), language=lang)
@@ -221,7 +221,7 @@ class HorizonOrchestrator:
             # Send webhook failure notification if configured
             if self.webhook_notifier:
                 await self.webhook_notifier.send_failure(
-                    date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    date=datetime.now(UTC).strftime("%Y-%m-%d"),
                     error_message=str(e),
                 )
 
@@ -229,13 +229,13 @@ class HorizonOrchestrator:
 
     def _determine_time_window(self, force_hours: int = None) -> datetime:
         if force_hours:
-            since = datetime.now(timezone.utc) - timedelta(hours=force_hours)
+            since = datetime.now(UTC) - timedelta(hours=force_hours)
         else:
             hours = self.config.filtering.time_window_hours
-            since = datetime.now(timezone.utc) - timedelta(hours=hours)
+            since = datetime.now(UTC) - timedelta(hours=hours)
         return since
 
-    async def fetch_all_sources(self, since: datetime) -> List[ContentItem]:
+    async def fetch_all_sources(self, since: datetime) -> list[ContentItem]:
         """Fetch content from all configured sources.
 
         This is a stable stage entry point for integrations such as MCP.
@@ -306,7 +306,7 @@ class HorizonOrchestrator:
 
             return all_items
 
-    async def _fetch_with_progress(self, name: str, scraper, since: datetime) -> List[ContentItem]:
+    async def _fetch_with_progress(self, name: str, scraper, since: datetime) -> list[ContentItem]:
         """Fetch from a scraper with progress indication.
 
         Args:
@@ -322,7 +322,7 @@ class HorizonOrchestrator:
         self.console.print(f"   Found {len(items)} items from {name}")
 
         # Show per-sub-source breakdown when there are multiple sub-sources
-        sub_counts: Dict[str, int] = defaultdict(int)
+        sub_counts: dict[str, int] = defaultdict(int)
         for item in items:
             sub_counts[self._sub_source_label(item)] += 1
         if len(sub_counts) > 1:
@@ -349,7 +349,7 @@ class HorizonOrchestrator:
             return meta["watchlist"]
         return item.author or "unknown"
 
-    def merge_cross_source_duplicates(self, items: List[ContentItem]) -> List[ContentItem]:
+    def merge_cross_source_duplicates(self, items: list[ContentItem]) -> list[ContentItem]:
         """Merge items that point to the same URL from different sources.
 
         This is a stable stage helper for integrations such as MCP.
@@ -372,13 +372,13 @@ class HorizonOrchestrator:
             return f"{host}{path}"
 
         # Group by normalized URL
-        url_groups: Dict[str, List[ContentItem]] = {}
+        url_groups: dict[str, list[ContentItem]] = {}
         for item in items:
             key = normalize_url(str(item.url))
             url_groups.setdefault(key, []).append(item)
 
         merged = []
-        for key, group in url_groups.items():
+        for _key, group in url_groups.items():
             if len(group) == 1:
                 merged.append(group[0])
                 continue
@@ -396,8 +396,7 @@ class HorizonOrchestrator:
                         primary.metadata[mk] = mv
 
                 # Append content (e.g., comments from another source)
-                if item is not primary and item.content:
-                    if primary.content and item.content not in primary.content:
+                if item is not primary and item.content and primary.content and item.content not in primary.content:
                         primary.content = (primary.content or "") + f"\n\n--- From {item.source_type.value} ---\n" + item.content
 
             primary.metadata["merged_sources"] = list(all_sources)
@@ -405,7 +404,7 @@ class HorizonOrchestrator:
 
         return merged
 
-    async def merge_topic_duplicates(self, items: List[ContentItem]) -> List[ContentItem]:
+    async def merge_topic_duplicates(self, items: list[ContentItem]) -> list[ContentItem]:
         """Merge items covering the same topic using AI semantic deduplication.
 
         This is a stable stage helper for integrations such as MCP.
@@ -466,8 +465,7 @@ class HorizonOrchestrator:
                     continue
                 dup = items[dup_idx]
                 # Merge comments/content from the duplicate into the primary
-                if dup.content:
-                    if not primary.content or dup.content not in primary.content:
+                if dup.content and (not primary.content or dup.content not in primary.content):
                         label = dup.source_type.value
                         primary.content = (primary.content or "") + f"\n\n--- From {label} ---\n{dup.content}"
                 self.console.print(
@@ -478,7 +476,7 @@ class HorizonOrchestrator:
 
         return [item for i, item in enumerate(items) if i not in drop_indices]
 
-    async def _expand_twitter_discussion(self, items: List[ContentItem]) -> None:
+    async def _expand_twitter_discussion(self, items: list[ContentItem]) -> None:
         """Second-stage: fetch reply text for important Twitter items and re-analyze.
 
         Only runs when sources.twitter.fetch_reply_text is True.
@@ -532,7 +530,7 @@ class HorizonOrchestrator:
         analyzer = ContentAnalyzer(ai_client)
         await analyzer.analyze_batch(expanded)
 
-    async def _enrich_important_items(self, items: List[ContentItem]) -> None:
+    async def _enrich_important_items(self, items: list[ContentItem]) -> None:
         """Enrich items with background knowledge (2nd AI pass).
 
         For each item that passed the score threshold, call AI to generate
@@ -550,7 +548,7 @@ class HorizonOrchestrator:
         await enricher.enrich_batch(items)
         self.console.print(f"   Enriched {len(items)} items\n")
 
-    async def _analyze_content(self, items: List[ContentItem]) -> List[ContentItem]:
+    async def _analyze_content(self, items: list[ContentItem]) -> list[ContentItem]:
         """Analyze content items with AI.
 
         Args:
@@ -568,7 +566,7 @@ class HorizonOrchestrator:
 
     async def _generate_summary(
         self,
-        items: List[ContentItem],
+        items: list[ContentItem],
         date: str,
         total_fetched: int,
         language: str = "en",

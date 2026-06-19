@@ -1,12 +1,11 @@
 """Tests for ChainedAIClient fallback logic."""
 
 import asyncio
-from datetime import datetime, timezone
 
 import pytest
 
 from src.ai.client import ChainedAIClient, _create_chained_client
-from src.models import AIConfig, AIProvider, ContentItem, SourceType
+from src.models import AIConfig, AIProvider
 
 
 class _DummyClient:

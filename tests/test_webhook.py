@@ -3,26 +3,26 @@
 import asyncio
 import json
 import os
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 from pydantic import ValidationError
 
+from src.ai.summarizer import DailySummarizer
 from src.models import ContentItem, SourceType, WebhookConfig
 from src.services.webhook import (
     WebhookNotifier,
+    _extract_headers,
     _format_markdown_for_webhook,
+    _isjson,
     _prepare_variables_for_body,
     _render,
     _truncate,
-    _isjson,
-    _extract_headers,
     redact_headers,
     redact_url,
 )
-from src.ai.summarizer import DailySummarizer
 
 _TEST_URL_ENV = "TEST_WEBHOOK_URL"
 _TEST_URL = "https://example.com/webhook"
@@ -809,8 +809,8 @@ def _make_item(title="Test Item", url="https://example.com/test", score=8.0):
         url=url,
         content="Some content",
         author="testuser",
-        published_at=datetime(2026, 4, 24, 12, 0, 0, tzinfo=timezone.utc),
-        fetched_at=datetime(2026, 4, 24, 12, 0, 0, tzinfo=timezone.utc),
+        published_at=datetime(2026, 4, 24, 12, 0, 0, tzinfo=UTC),
+        fetched_at=datetime(2026, 4, 24, 12, 0, 0, tzinfo=UTC),
         ai_score=score,
         ai_summary="AI summary",
         ai_tags=["test"],
@@ -1116,7 +1116,7 @@ class TestSendDailySummary:
         summarizer = DailySummarizer()
         items = [_make_item()]
 
-        before = int(datetime.now(timezone.utc).timestamp())
+        before = int(datetime.now(UTC).timestamp())
         with patch.object(notifier, "notify", new_callable=AsyncMock) as mock_notify:
             _run_async(
                 notifier.send_daily_summary(
@@ -1128,7 +1128,7 @@ class TestSendDailySummary:
                     summarizer=summarizer,
                 )
             )
-            after = int(datetime.now(timezone.utc).timestamp())
+            after = int(datetime.now(UTC).timestamp())
             vars = mock_notify.call_args[0][0]
             ts = int(vars["timestamp"])
             assert before <= ts <= after
@@ -1202,7 +1202,7 @@ class TestSendFailureNotification:
         )
         notifier = WebhookNotifier(config)
 
-        before = int(datetime.now(timezone.utc).timestamp())
+        before = int(datetime.now(UTC).timestamp())
         with patch.object(notifier, "notify", new_callable=AsyncMock) as mock_notify:
             _run_async(
                 notifier.send_failure(
@@ -1210,7 +1210,7 @@ class TestSendFailureNotification:
                     error_message="error",
                 )
             )
-            after = int(datetime.now(timezone.utc).timestamp())
+            after = int(datetime.now(UTC).timestamp())
             vars = mock_notify.call_args[0][0]
             ts = int(vars["timestamp"])
             assert before <= ts <= after

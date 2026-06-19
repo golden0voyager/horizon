@@ -1,13 +1,14 @@
 """Core data models for Horizon."""
 
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Optional, List, Dict, Any, Union
 import os
-from pydantic import BaseModel, HttpUrl, Field, model_validator, field_validator
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     """Supported information source types."""
 
     GITHUB = "github"
@@ -27,20 +28,20 @@ class ContentItem(BaseModel):
     source_type: SourceType
     title: str
     url: HttpUrl
-    content: Optional[str] = None
-    author: Optional[str] = None
+    content: str | None = None
+    author: str | None = None
     published_at: datetime
-    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     # AI analysis results
-    ai_score: Optional[float] = None  # 0-10 importance score
-    ai_reason: Optional[str] = None
-    ai_summary: Optional[str] = None
-    ai_tags: List[str] = Field(default_factory=list)
+    ai_score: float | None = None  # 0-10 importance score
+    ai_reason: str | None = None
+    ai_summary: str | None = None
+    ai_tags: list[str] = Field(default_factory=list)
 
 
-class AIProvider(str, Enum):
+class AIProvider(StrEnum):
     """Supported AI providers."""
 
     ANTHROPIC = "anthropic"
@@ -110,20 +111,20 @@ class AIConfig(BaseModel):
     """AI client configuration."""
 
     provider: AIProvider
-    provider_chain: Optional[str] = None
+    provider_chain: str | None = None
     model: str
-    base_url: Optional[str] = None
-    base_url_env: Optional[str] = None
+    base_url: str | None = None
+    base_url_env: str | None = None
     api_key_env: str
     temperature: float = 0.3
     max_tokens: int = 4096
     throttle_sec: float = 0.0
     analysis_concurrency: int = 1
     enrichment_concurrency: int = 1
-    languages: List[str] = Field(default_factory=lambda: ["en"])
+    languages: list[str] = Field(default_factory=lambda: ["en"])
     # Azure OpenAI specific; required when provider == AZURE
-    azure_endpoint_env: Optional[str] = None
-    api_version: Optional[str] = None
+    azure_endpoint_env: str | None = None
+    api_version: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -181,9 +182,9 @@ class GitHubSourceConfig(BaseModel):
     """GitHub source configuration."""
 
     type: str  # "user_events", "repo_releases", etc.
-    username: Optional[str] = None
-    owner: Optional[str] = None
-    repo: Optional[str] = None
+    username: str | None = None
+    owner: str | None = None
+    repo: str | None = None
     enabled: bool = True
 
 
@@ -201,7 +202,7 @@ class RSSSourceConfig(BaseModel):
     name: str
     url: HttpUrl
     enabled: bool = True
-    category: Optional[str] = None
+    category: str | None = None
 
 
 class RedditSubredditConfig(BaseModel):
@@ -230,8 +231,8 @@ class RedditConfig(BaseModel):
     """Reddit source configuration."""
 
     enabled: bool = True
-    subreddits: List[RedditSubredditConfig] = Field(default_factory=list)
-    users: List[RedditUserConfig] = Field(default_factory=list)
+    subreddits: list[RedditSubredditConfig] = Field(default_factory=list)
+    users: list[RedditUserConfig] = Field(default_factory=list)
     fetch_comments: int = 5  # top comments per post, 0 to disable
     # OAuth2 credentials (optional but strongly recommended for CI environments)
     client_id_env: str = "REDDIT_CLIENT_ID"
@@ -251,14 +252,14 @@ class TelegramConfig(BaseModel):
     """Telegram source configuration."""
 
     enabled: bool = True
-    channels: List[TelegramChannelConfig] = Field(default_factory=list)
+    channels: list[TelegramChannelConfig] = Field(default_factory=list)
 
 
 class TwitterConfig(BaseModel):
     """Twitter source configuration."""
 
     enabled: bool = True
-    users: List[str] = Field(default_factory=list)
+    users: list[str] = Field(default_factory=list)
     fetch_limit: int = 10
     fetch_reply_text: bool = False
     max_replies_per_tweet: int = 3
@@ -280,11 +281,11 @@ class OpenBBWatchlist(BaseModel):
     """
 
     name: str
-    symbols: List[str] = Field(default_factory=list)
+    symbols: list[str] = Field(default_factory=list)
     enabled: bool = True
     provider: str = "yfinance"
     fetch_limit: int = 20
-    category: Optional[str] = None
+    category: str | None = None
 
 
 class OpenBBConfig(BaseModel):
@@ -300,7 +301,7 @@ class OpenBBConfig(BaseModel):
     """
 
     enabled: bool = True
-    watchlists: List[OpenBBWatchlist] = Field(default_factory=list)
+    watchlists: list[OpenBBWatchlist] = Field(default_factory=list)
     fetch_filings: bool = False
     filings_provider: str = "sec"
 
@@ -318,10 +319,10 @@ class OSSInsightConfig(BaseModel):
 
     enabled: bool = False
     period: str = "past_24_hours"  # past_24_hours, past_28_days
-    languages: List[str] = Field(
+    languages: list[str] = Field(
         default_factory=lambda: ["All", "Python", "TypeScript"]
     )
-    keywords: List[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
     min_stars: int = 5
     max_items: int = 30
 
@@ -329,26 +330,26 @@ class OSSInsightConfig(BaseModel):
 class SourcesConfig(BaseModel):
     """All sources configuration."""
 
-    github: List[GitHubSourceConfig] = Field(default_factory=list)
+    github: list[GitHubSourceConfig] = Field(default_factory=list)
     hackernews: HackerNewsConfig = Field(default_factory=HackerNewsConfig)
-    rss: List[RSSSourceConfig] = Field(default_factory=list)
+    rss: list[RSSSourceConfig] = Field(default_factory=list)
     reddit: RedditConfig = Field(default_factory=RedditConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
-    twitter: Optional[TwitterConfig] = None
-    openbb: Optional[OpenBBConfig] = None
+    twitter: TwitterConfig | None = None
+    openbb: OpenBBConfig | None = None
     ossinsight: OSSInsightConfig = Field(default_factory=OSSInsightConfig)
 
 
 class WebhookConfig(BaseModel):
     """Webhook notification configuration."""
 
-    url_env: Optional[str] = (
+    url_env: str | None = (
         None  # Environment variable name containing the webhook URL
     )
-    request_body: Optional[Union[str, dict, list]] = (
+    request_body: str | dict | list | None = (
         None  # POST body: real JSON object or string with #{key} placeholders; if empty, will use GET
     )
-    headers: Optional[str] = None  # Custom headers, "Key: Value" per line
+    headers: str | None = None  # Custom headers, "Key: Value" per line
     delivery: str = "summary"  # summary, or summary_and_items
     overview_position: str = "first"  # For summary_and_items: first, or last
     platform: str = "generic"  # generic, feishu, lark, dingtalk, slack, discord
@@ -356,7 +357,7 @@ class WebhookConfig(BaseModel):
     fallback_layout: str = (
         "markdown"  # Layout to use when the requested layout is unsupported
     )
-    languages: Optional[List[str]] = (
+    languages: list[str] | None = (
         None  # Optional language filter for webhook delivery; defaults to all AI languages
     )
     enabled: bool = False
@@ -414,7 +415,7 @@ class EmailConfig(BaseModel):
     imap_enabled: bool = True
     smtp_server: str
     smtp_port: int = 465
-    smtp_username: Optional[str] = None
+    smtp_username: str | None = None
     email_address: str
     password_env: str = "EMAIL_PASSWORD"
     sender_name: str = "Horizon Daily"
@@ -437,5 +438,5 @@ class Config(BaseModel):
     ai: AIConfig
     sources: SourcesConfig
     filtering: FilteringConfig
-    email: Optional[EmailConfig] = None
-    webhook: Optional[WebhookConfig] = None
+    email: EmailConfig | None = None
+    webhook: WebhookConfig | None = None

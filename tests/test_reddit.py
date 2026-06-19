@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -25,7 +25,7 @@ def _make_config(fetch_comments: int = 1) -> RedditConfig:
 
 
 def _listing_payload() -> dict:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return {
         "data": {
             "children": [
@@ -61,7 +61,7 @@ def test_reddit_fetch_uses_browser_like_headers():
     client = httpx.AsyncClient(transport=transport)
     scraper = RedditScraper(_make_config(fetch_comments=0), client)
 
-    asyncio.run(scraper.fetch(datetime.now(timezone.utc) - timedelta(hours=1)))
+    asyncio.run(scraper.fetch(datetime.now(UTC) - timedelta(hours=1)))
     asyncio.run(client.aclose())
 
     assert len(requests) == 1
@@ -82,7 +82,7 @@ def test_reddit_comment_403_degrades_to_post_without_comments():
     client = httpx.AsyncClient(transport=transport)
     scraper = RedditScraper(_make_config(fetch_comments=3), client)
 
-    items = asyncio.run(scraper.fetch(datetime.now(timezone.utc) - timedelta(hours=1)))
+    items = asyncio.run(scraper.fetch(datetime.now(UTC) - timedelta(hours=1)))
     asyncio.run(client.aclose())
 
     assert len(items) == 1
@@ -120,7 +120,7 @@ def test_reddit_listing_403_falls_back_to_subreddit_rss():
     client = httpx.AsyncClient(transport=transport)
     scraper = RedditScraper(_make_config(fetch_comments=3), client)
 
-    items = asyncio.run(scraper.fetch(datetime(2029, 12, 31, tzinfo=timezone.utc)))
+    items = asyncio.run(scraper.fetch(datetime(2029, 12, 31, tzinfo=UTC)))
     asyncio.run(client.aclose())
 
     assert [request.url.path for request in requests] == [

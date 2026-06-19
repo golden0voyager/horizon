@@ -1,26 +1,31 @@
 """Interactive setup wizard for Horizon configuration."""
 
-import json
 import os
 import sys
-from pathlib import Path
-from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from rich.console import Console
-from rich.prompt import Prompt, Confirm
-from rich.table import Table
 from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
+from rich.table import Table
 
 from ..models import (
-    AIConfig, AIProvider, Config, FilteringConfig, SourcesConfig,
-    GitHubSourceConfig, HackerNewsConfig, RSSSourceConfig,
-    RedditConfig, RedditSubredditConfig, RedditUserConfig,
-    TelegramConfig, TelegramChannelConfig,
+    AIConfig,
+    AIProvider,
+    Config,
+    FilteringConfig,
+    GitHubSourceConfig,
+    HackerNewsConfig,
+    RedditConfig,
+    RedditSubredditConfig,
+    RedditUserConfig,
+    RSSSourceConfig,
+    SourcesConfig,
+    TelegramChannelConfig,
+    TelegramConfig,
 )
 from ..storage.manager import StorageManager
 from .presets import load_presets, match_sources
-
 
 console = Console()
 
@@ -41,7 +46,7 @@ def print_banner():
     console.print(banner)
 
 
-def configure_ai() -> Optional[AIConfig]:
+def configure_ai() -> AIConfig | None:
     """Step 1: Configure AI provider.
 
     Returns:
@@ -91,7 +96,7 @@ def configure_ai() -> Optional[AIConfig]:
         "Output languages (comma-separated)",
         default="zh,en",
     )
-    lang_list = [l.strip() for l in languages.split(",") if l.strip()]
+    lang_list = [lang.strip() for lang in languages.split(",") if lang.strip()]
 
     return AIConfig(
         provider=AIProvider(provider),
@@ -122,9 +127,9 @@ def get_interests() -> str:
 
 
 def select_sources(
-    preset_sources: List[Dict],
-    ai_sources: List[Dict],
-) -> List[Dict]:
+    preset_sources: list[dict],
+    ai_sources: list[dict],
+) -> list[dict]:
     """Step 5: Interactive source selection with a rich table.
 
     Args:
@@ -178,14 +183,14 @@ def select_sources(
             except ValueError:
                 pass
 
-    selected = [src for src, on in zip(all_sources, enabled) if on]
+    selected = [src for src, on in zip(all_sources, enabled, strict=False) if on]
     console.print(f"\n[green]✓ {len(selected)} sources selected[/green]")
     return selected
 
 
 def build_config(
     ai_config: AIConfig,
-    selected_sources: List[Dict],
+    selected_sources: list[dict],
 ) -> Config:
     """Step 6: Assemble the final Config object.
 
@@ -201,7 +206,6 @@ def build_config(
     reddit_subreddits = []
     reddit_users = []
     telegram_channels = []
-    hn_enabled = False
 
     for src in selected_sources:
         src_type = src.get("type", "")
@@ -244,7 +248,7 @@ def build_config(
                 fetch_limit=cfg.get("fetch_limit", 20),
             ))
         elif src_type == "hackernews":
-            hn_enabled = True
+            pass
 
     # Always include HackerNews as a universal source
     hn_config = HackerNewsConfig(

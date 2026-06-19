@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.models import ContentItem, SourceType
 from src.mcp.server import hz_get_metrics
 from src.mcp.service import HorizonPipelineService
+from src.models import ContentItem, SourceType
 
 
 def make_item(item_id: str, score: float | None = None) -> ContentItem:
@@ -18,7 +18,7 @@ def make_item(item_id: str, score: float | None = None) -> ContentItem:
         url=f"https://example.com/{item_id}",
         content="content",
         author="tester",
-        published_at=datetime.now(timezone.utc),
+        published_at=datetime.now(UTC),
     )
     item.ai_score = score
     return item

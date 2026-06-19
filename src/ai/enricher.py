@@ -6,22 +6,22 @@ For items that pass the score threshold, this module:
 """
 
 import asyncio
-import json
-import re
-import sys
 import os
-from typing import List, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
-from ddgs import DDGS
+import sys
 
+from ddgs import DDGS
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from ..models import ContentItem
 from .client import AIClient
 from .prompts import (
-    CONCEPT_EXTRACTION_SYSTEM, CONCEPT_EXTRACTION_USER,
-    CONTENT_ENRICHMENT_SYSTEM, CONTENT_ENRICHMENT_USER,
+    CONCEPT_EXTRACTION_SYSTEM,
+    CONCEPT_EXTRACTION_USER,
+    CONTENT_ENRICHMENT_SYSTEM,
+    CONTENT_ENRICHMENT_USER,
 )
 from .utils import parse_json_response
-from ..models import ContentItem
 
 
 class ContentEnricher:
@@ -36,7 +36,7 @@ class ContentEnricher:
         concurrency = getattr(config, "enrichment_concurrency", 1)
         return max(concurrency, 1)
 
-    async def enrich_batch(self, items: List[ContentItem]) -> None:
+    async def enrich_batch(self, items: list[ContentItem]) -> None:
         """Enrich items in-place with background knowledge.
 
         Args:
@@ -76,7 +76,7 @@ class ContentEnricher:
         try:
             # Suppress primp "Impersonate ... does not exist" stderr warning
             stderr = sys.stderr
-            sys.stderr = open(os.devnull, "w")
+            sys.stderr = open(os.devnull, "w")  # noqa: SIM115
             try:
                 ddgs = DDGS()
                 results = await asyncio.to_thread(ddgs.text, query, max_results=max_results)
@@ -92,14 +92,14 @@ class ContentEnricher:
         ]
 
     @staticmethod
-    def _parse_json_response(response: str) -> Optional[dict]:
+    def _parse_json_response(response: str) -> dict | None:
         """Try multiple strategies to extract a JSON object from an AI response.
 
         Returns the parsed dict, or None if all strategies fail.
         """
         return parse_json_response(response)
 
-    async def _extract_concepts(self, item: ContentItem, content_text: str) -> List[str]:
+    async def _extract_concepts(self, item: ContentItem, content_text: str) -> list[str]:
         """Ask AI to identify concepts that need explanation.
 
         Args:

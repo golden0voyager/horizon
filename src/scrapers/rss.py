@@ -5,14 +5,14 @@ import hashlib
 import logging
 import os
 import re
-from datetime import datetime, timezone
-from typing import List
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-import httpx
-import feedparser
 
+import feedparser
+import httpx
+
+from ..models import ContentItem, RSSSourceConfig, SourceType
 from .base import BaseScraper
-from ..models import ContentItem, SourceType, RSSSourceConfig
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class RSSScraper(BaseScraper):
     """Scraper for RSS/Atom feeds."""
 
-    def __init__(self, sources: List[RSSSourceConfig], http_client: httpx.AsyncClient):
+    def __init__(self, sources: list[RSSSourceConfig], http_client: httpx.AsyncClient):
         """Initialize RSS scraper.
 
         Args:
@@ -29,7 +29,7 @@ class RSSScraper(BaseScraper):
         """
         super().__init__({"sources": sources}, http_client)
 
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         """Fetch RSS feed items.
 
         Args:
@@ -52,7 +52,7 @@ class RSSScraper(BaseScraper):
 
     async def _fetch_feed(
         self, source: RSSSourceConfig, since: datetime
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         """Fetch items from a single RSS feed.
 
         Args:
@@ -134,7 +134,7 @@ class RSSScraper(BaseScraper):
                     # Try parsing structured time first
                     if f"{field}_parsed" in entry and entry[f"{field}_parsed"]:
                         return datetime.fromtimestamp(
-                            calendar.timegm(entry[f"{field}_parsed"]), tz=timezone.utc
+                            calendar.timegm(entry[f"{field}_parsed"]), tz=UTC
                         )
                     # Fallback to string parsing
                     date_str = entry[field]

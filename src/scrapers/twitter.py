@@ -1,15 +1,13 @@
 """Twitter scraper using Playwright + Cookie (replaces Apify)."""
 
 import asyncio
-import glob
 import hashlib
 import json
 import logging
 import os
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Optional
 
 from ..models import ContentItem, SourceType, TwitterConfig
 from .base import BaseScraper
@@ -68,7 +66,7 @@ class TwitterScraper(BaseScraper):
         super().__init__(config.model_dump(), http_client)
         self.twitter_config = config
 
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         if not self.twitter_config.enabled:
             return []
 
@@ -96,7 +94,7 @@ class TwitterScraper(BaseScraper):
             len(cookie_files),
         )
 
-        all_items: List[ContentItem] = []
+        all_items: list[ContentItem] = []
         failed_users: list[tuple[str, int]] = []
         lock = asyncio.Lock()
 
@@ -197,7 +195,7 @@ class TwitterScraper(BaseScraper):
         logger.info("Fetched %d tweets via Playwright.", len(all_items))
         return all_items
 
-    async def _scrape_user(self, ctx, username: str, since: datetime) -> Optional[list[dict]]:
+    async def _scrape_user(self, ctx, username: str, since: datetime) -> list[dict] | None:
         """Scrape a single user's tweets via GraphQL interception."""
         page = await ctx.new_page()
         graphql_tweets: list[dict] = []
@@ -347,7 +345,7 @@ class TwitterScraper(BaseScraper):
         finally:
             await page.close()
 
-    def _parse_tweet(self, tweet: dict, username: str) -> Optional[ContentItem]:
+    def _parse_tweet(self, tweet: dict, username: str) -> ContentItem | None:
         """Convert raw tweet dict to Horizon ContentItem."""
         try:
             tweet_id = str(tweet.get("tweet_id", ""))
@@ -362,7 +360,7 @@ class TwitterScraper(BaseScraper):
             try:
                 published_at = datetime.fromisoformat(created_at_raw)
                 if published_at.tzinfo is None:
-                    published_at = published_at.replace(tzinfo=timezone.utc)
+                    published_at = published_at.replace(tzinfo=UTC)
             except (ValueError, TypeError):
                 return None
 

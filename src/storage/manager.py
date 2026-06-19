@@ -11,7 +11,6 @@ from pydantic import ValidationError
 
 from ..models import Config
 
-
 # Matches ${VAR_NAME} in string config values. Names follow env-var rules
 # (ASCII letters, digits, underscore; must not start with a digit).
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -69,7 +68,7 @@ class StorageManager:
             )
 
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
+            with open(self.config_path, encoding="utf-8") as f:
                 data = json.load(f)
         except json.JSONDecodeError as e:
             raise ConfigError(
@@ -124,7 +123,7 @@ class StorageManager:
             return []
 
         try:
-            with open(subscribers_path, "r", encoding="utf-8") as f:
+            with open(subscribers_path, encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
             return []

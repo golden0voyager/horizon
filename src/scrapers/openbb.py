@@ -28,13 +28,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any, Iterable, List, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
-from .base import BaseScraper
 from ..models import ContentItem, OpenBBConfig, OpenBBWatchlist, SourceType
+from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class OpenBBScraper(BaseScraper):
         self._obb = self._try_import_obb()
 
     @staticmethod
-    def _try_import_obb() -> Optional[Any]:
+    def _try_import_obb() -> Any | None:
         """Try to import the OpenBB App, returning None if not installed.
 
         Importing ``openbb`` is expensive (loads every registered
@@ -76,7 +77,7 @@ class OpenBBScraper(BaseScraper):
             )
             return None
 
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         """Fetch items from all enabled OpenBB watchlists.
 
         Args:
@@ -90,7 +91,7 @@ class OpenBBScraper(BaseScraper):
 
         since_utc = self._ensure_utc(since)
         seen_urls: set[str] = set()
-        items: List[ContentItem] = []
+        items: list[ContentItem] = []
 
         for watchlist in self.openbb_config.watchlists:
             if not watchlist.enabled or not watchlist.symbols:
@@ -117,7 +118,7 @@ class OpenBBScraper(BaseScraper):
         self,
         watchlist: OpenBBWatchlist,
         since_utc: datetime,
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         """Fetch news for one watchlist via ``obb.news.company()``."""
         symbols_param = ",".join(watchlist.symbols)
         response = await asyncio.to_thread(
@@ -127,7 +128,7 @@ class OpenBBScraper(BaseScraper):
             provider=watchlist.provider,
         )
         results = getattr(response, "results", None) or []
-        items: List[ContentItem] = []
+        items: list[ContentItem] = []
         for raw in results:
             item = self._raw_to_item(raw, watchlist, since_utc)
             if item is not None:
@@ -139,7 +140,7 @@ class OpenBBScraper(BaseScraper):
         raw: Any,
         watchlist: OpenBBWatchlist,
         since_utc: datetime,
-    ) -> Optional[ContentItem]:
+    ) -> ContentItem | None:
         """Map one OpenBB news record into a ContentItem.
 
         Returns None when the record is too old, has no URL, or fails
@@ -185,11 +186,11 @@ class OpenBBScraper(BaseScraper):
     @staticmethod
     def _ensure_utc(moment: datetime) -> datetime:
         if moment.tzinfo is None:
-            return moment.replace(tzinfo=timezone.utc)
-        return moment.astimezone(timezone.utc)
+            return moment.replace(tzinfo=UTC)
+        return moment.astimezone(UTC)
 
     @staticmethod
-    def _coerce_datetime(value: Any) -> Optional[datetime]:
+    def _coerce_datetime(value: Any) -> datetime | None:
         """Normalize whatever OpenBB returns for `date` into aware UTC."""
         if value is None:
             return None
@@ -203,18 +204,18 @@ class OpenBBScraper(BaseScraper):
         else:
             return None
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
 
     @staticmethod
-    def _coerce_url(value: Any) -> Optional[str]:
+    def _coerce_url(value: Any) -> str | None:
         if not value:
             return None
         text = str(value).strip()
         return text or None
 
     @staticmethod
-    def _parse_symbols(raw_symbols: Any) -> List[str]:
+    def _parse_symbols(raw_symbols: Any) -> list[str]:
         if isinstance(raw_symbols, str):
             parts: Iterable[str] = raw_symbols.split(",")
         elif isinstance(raw_symbols, (list, tuple, set)):
@@ -223,7 +224,7 @@ class OpenBBScraper(BaseScraper):
             return []
         cleaned = [str(p).strip().upper() for p in parts if str(p).strip()]
         seen: set[str] = set()
-        unique: List[str] = []
+        unique: list[str] = []
         for sym in cleaned:
             if sym in seen:
                 continue

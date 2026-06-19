@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 from src.models import RSSSourceConfig
 from src.scrapers.rss import RSSScraper
@@ -28,7 +27,7 @@ def test_rss_ids_are_deterministic() -> None:
     client.get.return_value = response
     source = RSSSourceConfig(name="Test", url="https://example.com/feed.xml")
     scraper = RSSScraper([source], client)
-    since = datetime(2026, 4, 24, 0, 0, tzinfo=timezone.utc)
+    since = datetime(2026, 4, 24, 0, 0, tzinfo=UTC)
 
     first = asyncio.run(scraper.fetch(since))[0].id
     second = asyncio.run(scraper.fetch(since))[0].id

@@ -5,11 +5,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-
 
 STAGES = {
     "raw": "raw_items.json",
@@ -148,9 +147,9 @@ class RunStore:
 
     @staticmethod
     def _make_run_id() -> str:
-        now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        now = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         return f"run-{now}-{uuid4().hex[:8]}"
 
     @staticmethod
     def _utc_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()

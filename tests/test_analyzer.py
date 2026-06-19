@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import src.ai.analyzer as analyzer_module
@@ -13,7 +13,7 @@ def _make_item(item_id: str) -> ContentItem:
         source_type=SourceType.RSS,
         title=f"Item {item_id}",
         url="https://example.com/item",
-        published_at=datetime(2026, 4, 26, tzinfo=timezone.utc),
+        published_at=datetime(2026, 4, 26, tzinfo=UTC),
     )
 
 

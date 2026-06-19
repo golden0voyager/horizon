@@ -3,14 +3,13 @@
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import datetime
 
 import httpx
 from bs4 import BeautifulSoup
 
+from ..models import ContentItem, SourceType, TelegramChannelConfig, TelegramConfig
 from .base import BaseScraper
-from ..models import ContentItem, TelegramConfig, TelegramChannelConfig, SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ class TelegramScraper(BaseScraper):
         super().__init__(config.model_dump(), http_client)
         self.telegram_config = config
 
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         if not self.config.get("enabled", True):
             return []
 
@@ -46,7 +45,7 @@ class TelegramScraper(BaseScraper):
                 items.extend(result)
         return items
 
-    async def _fetch_channel(self, cfg: TelegramChannelConfig, since: datetime) -> List[ContentItem]:
+    async def _fetch_channel(self, cfg: TelegramChannelConfig, since: datetime) -> list[ContentItem]:
         url = f"{TELEGRAM_WEB_BASE}/{cfg.channel}"
         headers = {"User-Agent": USER_AGENT}
         try:
@@ -65,7 +64,7 @@ class TelegramScraper(BaseScraper):
 
     def _parse_channel_html(
         self, html: str, cfg: TelegramChannelConfig, since: datetime
-    ) -> List[ContentItem]:
+    ) -> list[ContentItem]:
         soup = BeautifulSoup(html, "html.parser")
         messages = soup.select("div.tgme_widget_message[data-post]")
 
@@ -78,7 +77,7 @@ class TelegramScraper(BaseScraper):
 
     def _parse_message(
         self, msg_el, channel: str, since: datetime
-    ) -> Optional[ContentItem]:
+    ) -> ContentItem | None:
         # Extract message ID
         data_post = msg_el.get("data-post", "")
         msg_id = data_post.split("/")[-1] if "/" in data_post else data_post

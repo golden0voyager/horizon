@@ -4,15 +4,15 @@ import json
 import logging
 import os
 import re
-from urllib.parse import urlsplit, urlunsplit
-from datetime import datetime, timezone
-from typing import Any, List, Optional, Union, cast
-from urllib.parse import urlparse
+from datetime import UTC, datetime
+from typing import Any, cast
+from urllib.parse import urlparse, urlsplit, urlunsplit
+
 import httpx
 
 from ..ai.markdown_utils import clean_app_summary_markdown
-from ..models import ContentItem, WebhookConfig
 from ..ai.summarizer import DailySummarizer
+from ..models import ContentItem, WebhookConfig
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,8 @@ def _truncate(value: str, limit: int, split: str) -> str:
 
 
 def _render(
-    template: Union[str, dict, list], variables: dict
-) -> Union[str, dict, list]:
+    template: str | dict | list, variables: dict
+) -> str | dict | list:
     """Replace #{key} and #{key?params} placeholders in a template.
 
     Supports strings, dicts, and lists.  For dicts/lists, walks all
@@ -117,7 +117,7 @@ def _format_markdown_for_webhook(value: str) -> str:
 
 
 def _prepare_variables_for_body(
-    raw_body: Union[str, dict, list, None], variables: dict
+    raw_body: str | dict | list | None, variables: dict
 ) -> dict:
     """Apply webhook-safe variable formatting before body rendering."""
     if raw_body is None or "summary" not in variables:
@@ -169,7 +169,7 @@ def _collapsible_panel(title: str, content: str) -> dict[str, Any]:
     }
 
 
-def _extract_headers(headers_str: Optional[str]) -> dict:
+def _extract_headers(headers_str: str | None) -> dict:
     """Parse custom headers from a multi-line "Key: Value" string.
 
     Args:
@@ -371,7 +371,7 @@ class WebhookNotifier:
 
     def _build_feishu_collapsible_body(
         self,
-        important_items: List[ContentItem],
+        important_items: list[ContentItem],
         all_items_count: int,
         date: str,
         lang: str,
@@ -440,12 +440,12 @@ class WebhookNotifier:
     def build_daily_summary_messages(
         self,
         summary: str,
-        important_items: List[ContentItem],
+        important_items: list[ContentItem],
         all_items_count: int,
         date: str,
         lang: str,
         summarizer: DailySummarizer,
-    ) -> List[dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Build the variables for all webhook messages for one language."""
         webhook_languages = getattr(self.config, "languages", None)
         if webhook_languages and lang not in webhook_languages:
@@ -457,7 +457,7 @@ class WebhookNotifier:
             "important_items": len(important_items),
             "all_items": all_items_count,
             "result": "success",
-            "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+            "timestamp": str(int(datetime.now(UTC).timestamp())),
         }
 
         if self._can_use_feishu_collapsible():
@@ -488,7 +488,7 @@ class WebhookNotifier:
 
         delivery = getattr(self.config, "delivery", "summary")
         if delivery == "summary_and_items":
-            item_messages: List[dict[str, Any]] = []
+            item_messages: list[dict[str, Any]] = []
             overview = summarizer.generate_webhook_overview(
                 important_items,
                 date,
@@ -612,7 +612,7 @@ class WebhookNotifier:
             )
             logger.error("Webhook unexpected error: URL=%s, type=%s, error=%s", safe_url, type(e).__name__, e)
 
-    def _check_body_error_code(self, body: str) -> Optional[str]:
+    def _check_body_error_code(self, body: str) -> str | None:
         """Check if a 2xx response body contains a platform-specific error code.
 
         Returns a descriptive string if an error is detected, or None if the
@@ -709,7 +709,7 @@ class WebhookNotifier:
     async def send_daily_summary(
         self,
         summary: str,
-        important_items: List[ContentItem],
+        important_items: list[ContentItem],
         all_items_count: int,
         date: str,
         lang: str,
@@ -766,7 +766,7 @@ class WebhookNotifier:
                 "important_items": 0,
                 "all_items": 0,
                 "result": "failed",
-                "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+                "timestamp": str(int(datetime.now(UTC).timestamp())),
                 "message_title": "Horizon generation failed",
                 "message_kind": "failure",
                 "summary": f"generation failed: {error_message}",

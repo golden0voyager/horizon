@@ -9,7 +9,6 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import parseaddr
-from typing import List
 
 try:
     import markdown
@@ -151,7 +150,7 @@ class EmailManager:
         except Exception as e:
             logger.error(f"Error checking subscriptions: {e}")
 
-    def send_daily_summary(self, summary_md: str, subject: str, subscribers: List[str]):
+    def send_daily_summary(self, summary_md: str, subject: str, subscribers: list[str]):
         """Sends the daily summary to all subscribers."""
         if not self.config.enabled or not subscribers:
             return

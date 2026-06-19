@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -29,8 +29,8 @@ def _make_test_items() -> list[ContentItem]:
             url="https://example.com/gpt5",
             content="OpenAI announced GPT-5 with major improvements.",
             author="openai",
-            published_at=datetime(2026, 4, 24, 10, 0, tzinfo=timezone.utc),
-            fetched_at=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            published_at=datetime(2026, 4, 24, 10, 0, tzinfo=UTC),
+            fetched_at=datetime(2026, 4, 24, 12, 0, tzinfo=UTC),
             ai_score=9.0,
             ai_summary="OpenAI released GPT-5 featuring multimodal capabilities and improved reasoning.",
             ai_tags=["ai", "llm", "openai"],
@@ -46,8 +46,8 @@ def _make_test_items() -> list[ContentItem]:
             url="https://example.com/linux7",
             content="Linux kernel 7.0 brings significant performance improvements.",
             author="torvalds",
-            published_at=datetime(2026, 4, 24, 8, 0, tzinfo=timezone.utc),
-            fetched_at=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            published_at=datetime(2026, 4, 24, 8, 0, tzinfo=UTC),
+            fetched_at=datetime(2026, 4, 24, 12, 0, tzinfo=UTC),
             ai_score=7.5,
             ai_summary="Linux kernel 7.0 released with performance gains and new hardware support.",
             ai_tags=["linux", "kernel", "performance"],
@@ -88,7 +88,7 @@ async def _run_test(
     webhook_config, lang: str, dry_run: bool, delivery_override: str | None = None
 ) -> None:
     """Execute the webhook test."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     items = _make_test_items()
     summarizer = DailySummarizer()
     summary = await summarizer.generate_summary(items, today, len(items), language=lang)

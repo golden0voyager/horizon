@@ -7,7 +7,6 @@ Horizon run, so the orchestrator can print a summary at the end.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict
 
 
 @dataclass
@@ -24,14 +23,14 @@ class ProviderUsage:
 class TokenUsageSnapshot:
     total_input_tokens: int
     total_output_tokens: int
-    per_provider: Dict[str, ProviderUsage] = field(default_factory=dict)
+    per_provider: dict[str, ProviderUsage] = field(default_factory=dict)
 
     @property
     def total_tokens(self) -> int:
         return self.total_input_tokens + self.total_output_tokens
 
 
-_provider_usage: Dict[str, ProviderUsage] = {}
+_provider_usage: dict[str, ProviderUsage] = {}
 
 
 def record_usage(provider: str, input_tokens: int = 0, output_tokens: int = 0) -> None:

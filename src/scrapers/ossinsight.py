@@ -7,8 +7,7 @@ substring (case-insensitive). Without keywords, all trending repos in the
 configured languages flow through.
 """
 
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
 
 import httpx
 
@@ -32,12 +31,12 @@ class OSSInsightScraper(BaseScraper):
         self.cfg: OSSInsightConfig = config
         self._keywords_lower = [kw.lower() for kw in self.cfg.keywords if kw]
 
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         """Fetch trending repos for each configured language and apply filters."""
         if not self.cfg.enabled:
             return []
 
-        items: List[ContentItem] = []
+        items: list[ContentItem] = []
         seen_ids: set[str] = set()
 
         for lang in self.cfg.languages:
@@ -58,7 +57,7 @@ class OSSInsightScraper(BaseScraper):
         items.sort(key=lambda x: x.metadata.get("stars_gained", 0), reverse=True)
         return items[: self.cfg.max_items]
 
-    async def _fetch_period(self, period: str, language: str) -> List[dict]:
+    async def _fetch_period(self, period: str, language: str) -> list[dict]:
         """Call OSS Insight API for one (period, language) combo."""
         params = {"period": period, "language": language}
         try:
@@ -77,7 +76,7 @@ class OSSInsightScraper(BaseScraper):
         rows = data.get("rows") or []
         return rows
 
-    def _row_to_item(self, row: dict, language: str) -> Optional[ContentItem]:
+    def _row_to_item(self, row: dict, language: str) -> ContentItem | None:
         """Convert a raw OSS Insight row into a ContentItem."""
         repo_name = row.get("repo_name")
         repo_id = row.get("repo_id")
@@ -114,7 +113,7 @@ class OSSInsightScraper(BaseScraper):
             url=url,
             content="\n".join(content_lines),
             author=repo_name.split("/")[0] if "/" in repo_name else None,
-            published_at=datetime.now(timezone.utc),
+            published_at=datetime.now(UTC),
             metadata={
                 "repo": repo_name,
                 "stars_gained": stars_gained,

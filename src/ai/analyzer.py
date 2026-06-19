@@ -1,16 +1,14 @@
 """Content analysis using AI."""
 
 import asyncio
-import json
-import re
-from typing import List, Optional
-from tenacity import retry, stop_after_attempt, wait_exponential
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
 
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from ..models import ContentItem
 from .client import AIClient
 from .prompts import CONTENT_ANALYSIS_SYSTEM, CONTENT_ANALYSIS_USER
 from .utils import parse_json_response
-from ..models import ContentItem
 
 DEFAULT_THROTTLE_SEC = 0.0
 
@@ -22,7 +20,7 @@ class ContentAnalyzer:
         self.client = ai_client
 
     @staticmethod
-    def _parse_json_response(response: str) -> Optional[dict]:
+    def _parse_json_response(response: str) -> dict | None:
         """Try multiple strategies to extract a JSON object from an AI response.
 
         Returns the parsed dict, or None if all strategies fail.
@@ -41,7 +39,7 @@ class ContentAnalyzer:
         concurrency = getattr(config, "analysis_concurrency", 1)
         return max(concurrency, 1)
 
-    async def analyze_batch(self, items: List[ContentItem]) -> List[ContentItem]:
+    async def analyze_batch(self, items: list[ContentItem]) -> list[ContentItem]:
         throttle_sec = self._get_throttle_sec()
         concurrency = self._get_concurrency()
         semaphore = asyncio.Semaphore(concurrency)

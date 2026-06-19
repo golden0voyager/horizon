@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from ..services.webhook import WebhookNotifier
 from .errors import HorizonMcpError
 from .horizon_adapter import (
     apply_source_filter,
@@ -23,7 +24,6 @@ from .horizon_adapter import (
     resolve_horizon_path,
 )
 from .run_store import RunStore
-from ..services.webhook import WebhookNotifier
 
 
 def _default_runs_root() -> Path:
@@ -188,8 +188,7 @@ class HorizonPipelineService:
                 if not os.getenv(pwd_key):
                     missing_env.append(pwd_key)
 
-            if getattr(ctx.config, "webhook", None) and ctx.config.webhook and ctx.config.webhook.enabled:
-                if ctx.config.webhook.url_env and not os.getenv(ctx.config.webhook.url_env):
+            if getattr(ctx.config, "webhook", None) and ctx.config.webhook and ctx.config.webhook.enabled and ctx.config.webhook.url_env and not os.getenv(ctx.config.webhook.url_env):
                     missing_env.append(ctx.config.webhook.url_env)
 
         return {
@@ -233,7 +232,7 @@ class HorizonPipelineService:
         orchestrator = make_orchestrator(ctx.runtime, ctx.config, storage)
 
         run_id = self.run_store.create_run(run_id)
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
         raw_items = await orchestrator.fetch_all_sources(since)
         merged_items = orchestrator.merge_cross_source_duplicates(raw_items)
@@ -414,7 +413,7 @@ class HorizonPipelineService:
         )
 
         total_fetched = self._total_fetched(run_id, fallback=len(items))
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
 
         summarizer = ctx.runtime.DailySummarizer()
         summary = await summarizer.generate_summary(
@@ -433,7 +432,7 @@ class HorizonPipelineService:
         summary_meta = {
             "summary_stage": stage,
             "summary_language": language,
-            "summary_generated_at": datetime.now(timezone.utc).isoformat(),
+            "summary_generated_at": datetime.now(UTC).isoformat(),
             "summary_artifact": str(run_summary_path.resolve()),
         }
         if published_path:
@@ -635,7 +634,7 @@ class HorizonPipelineService:
             "important_items": important_items,
             "all_items": all_items,
             "result": result,
-            "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+            "timestamp": str(int(datetime.now(UTC).timestamp())),
             "message_title": f"Horizon {date} webhook",
             "message_kind": "manual",
             "summary": summary,

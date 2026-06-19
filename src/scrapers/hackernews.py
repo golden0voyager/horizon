@@ -1,14 +1,14 @@
 """Hacker News scraper implementation."""
 
+import asyncio
 import logging
 import re
-from datetime import datetime, timezone
-from typing import List, Optional
-import asyncio
+from datetime import UTC, datetime
+
 import httpx
 
+from ..models import ContentItem, HackerNewsConfig, SourceType
 from .base import BaseScraper
-from ..models import ContentItem, SourceType, HackerNewsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class HackerNewsScraper(BaseScraper):
         super().__init__(config.model_dump(), http_client)
         self.base_url = "https://hacker-news.firebaseio.com/v0"
 
-    async def fetch(self, since: datetime) -> List[ContentItem]:
+    async def fetch(self, since: datetime) -> list[ContentItem]:
         if not self.config.get("enabled", True):
             return []
 
@@ -51,7 +51,7 @@ class HackerNewsScraper(BaseScraper):
                     continue
                 if story.get("score", 0) < min_score:
                     continue
-                published_at = datetime.fromtimestamp(story["time"], tz=timezone.utc)
+                published_at = datetime.fromtimestamp(story["time"], tz=UTC)
                 if published_at < since:
                     continue
                 valid_stories.append(story)
@@ -62,7 +62,7 @@ class HackerNewsScraper(BaseScraper):
             # Fetch all comments concurrently
             all_comments = await asyncio.gather(*comment_tasks, return_exceptions=True)
 
-            for story, comments in zip(valid_stories, all_comments):
+            for story, comments in zip(valid_stories, all_comments, strict=False):
                 if isinstance(comments, Exception):
                     comments = []
                 item = self._parse_story(story, comments)
@@ -75,7 +75,7 @@ class HackerNewsScraper(BaseScraper):
             logger.warning("Error fetching Hacker News stories: %s", e)
             return []
 
-    async def _fetch_story(self, story_id: int) -> Optional[dict]:
+    async def _fetch_story(self, story_id: int) -> dict | None:
         try:
             response = await self.client.get(f"{self.base_url}/item/{story_id}.json")
             response.raise_for_status()
@@ -83,7 +83,7 @@ class HackerNewsScraper(BaseScraper):
         except httpx.HTTPError:
             return None
 
-    async def _fetch_comments(self, comment_ids: List[int]) -> List[dict]:
+    async def _fetch_comments(self, comment_ids: list[int]) -> list[dict]:
         """Fetch multiple comments concurrently."""
         if not comment_ids:
             return []
@@ -97,12 +97,12 @@ class HackerNewsScraper(BaseScraper):
                 comments.append(r)
         return comments
 
-    def _parse_story(self, story: dict, comments: List[dict]) -> ContentItem:
+    def _parse_story(self, story: dict, comments: list[dict]) -> ContentItem:
         story_id = story["id"]
         title = story.get("title", "")
         url = story.get("url", f"https://news.ycombinator.com/item?id={story_id}")
         author = story.get("by", "unknown")
-        published_at = datetime.fromtimestamp(story["time"], tz=timezone.utc)
+        published_at = datetime.fromtimestamp(story["time"], tz=UTC)
 
         # Build content: original text + top comments
         parts = []

@@ -10,9 +10,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from rich.console import Console
 
-from .storage.manager import ConfigError, StorageManager
 from .orchestrator import HorizonOrchestrator
-
+from .storage.manager import ConfigError, StorageManager
 
 console = Console()
 
