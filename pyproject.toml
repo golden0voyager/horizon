@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
+    "pytest-timeout>=2.3.0",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
 ]
@@ -53,8 +54,11 @@ packages = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-q"
-testpaths = ["tests"]
+addopts = "-q -m 'not requires_playwright'"
+markers = [
+    "requires_playwright: tests that require a real chromium runtime (Layer 2)",
+]
+testpaths = ["tests"]  
 
 [tool.coverage.run]
 source = ["src"]
