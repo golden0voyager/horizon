@@ -9,6 +9,8 @@ import random
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import HttpUrl
+
 from ..models import ContentItem, SourceType, TwitterConfig
 from .base import BaseScraper
 
@@ -122,16 +124,7 @@ class TwitterScraper(BaseScraper):
                 contexts.append(ctx)
 
             # Warm-up each context by visiting x.com/home
-            for i, ctx in enumerate(contexts):
-                page = await ctx.new_page()
-                try:
-                    await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=15000)
-                    await asyncio.sleep(2)
-                    logger.info("Cookie #%d warm-up done", i + 1)
-                except Exception as exc:
-                    logger.warning("Cookie #%d warm-up failed: %s", i + 1, exc)
-                finally:
-                    await page.close()
+            await self._warm_up_contexts(contexts)
 
             num_contexts = len(contexts)
 
@@ -194,6 +187,26 @@ class TwitterScraper(BaseScraper):
 
         logger.info("Fetched %d tweets via Playwright.", len(all_items))
         return all_items
+
+    async def _warm_up_contexts(self, contexts) -> None:
+        """Visit https://x.com/home in each context so cookies get a chance to
+        authenticate the session before user-specific scraping begins.
+
+        Best-effort: failures are logged but never raised. Production behaviour
+        is unchanged from PR 2 (warm-up was inline in ``fetch``); the extraction
+        exists so Layer 2 tests can monkeypatch this seam and avoid hitting the
+        real x.com during CI.
+        """
+        for i, ctx in enumerate(contexts):
+            page = await ctx.new_page()
+            try:
+                await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(2)
+                logger.info("Cookie #%d warm-up done", i + 1)
+            except Exception as exc:
+                logger.warning("Cookie #%d warm-up failed: %s", i + 1, exc)
+            finally:
+                await page.close()
 
     async def _scrape_user(self, ctx, username: str, since: datetime) -> list[dict] | None:
         """Scrape a single user's tweets via GraphQL interception."""
@@ -372,7 +385,7 @@ class TwitterScraper(BaseScraper):
                 id=self._generate_id(SourceType.TWITTER.value, "tweet", tweet_id),
                 source_type=SourceType.TWITTER,
                 title=f"@{username}: {title_body}",
-                url=f"https://x.com/{username}/status/{tweet_id}",
+                url=HttpUrl(f"https://x.com/{username}/status/{tweet_id}"),
                 content=text,
                 author=username,
                 published_at=published_at,
@@ -385,3 +398,123 @@ class TwitterScraper(BaseScraper):
         except Exception as exc:
             logger.debug("Failed to parse tweet: %s", exc)
             return None
+
+    async def fetch_replies_for_item(self, item: ContentItem) -> list[str]:
+        """Fetch top replies for a single tweet via the legacy Apify scweet actor.
+
+        Returns formatted markdown lines like ``[@alice | ❤️ 20 | 💬 3] great take``.
+        Returns ``[]`` for any short-circuit case (config disabled, missing
+        conversation_id, missing APIFY token, or upstream failure).
+
+        NOTE: This path remains Apify-based to honour the existing test contract
+        (``tests/test_twitter.py`` uses ``httpx.MockTransport`` against the v2
+        Apify REST endpoints). A future migration to Playwright should mirror
+        the same return shape and config knobs so callers do not change.
+        """
+        if not self.twitter_config.fetch_reply_text:
+            return []
+
+        if self.client is None:
+            return []
+
+        metadata = item.metadata
+        conversation_id = metadata.get("conversation_id") or metadata.get("tweet_id")
+        if not conversation_id:
+            return []
+
+        apify_token = os.getenv(self.twitter_config.apify_token_env, "").strip()
+        if not apify_token:
+            return []
+
+        base_url = "https://api.apify.com/v2"
+        actor_id = self.twitter_config.actor_id
+
+        try:
+            start_resp = await self.client.post(
+                f"{base_url}/acts/{actor_id}/runs",
+                params={"token": apify_token},
+                json={"conversation_id": str(conversation_id)},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Apify reply run start failed: %s", exc)
+            return []
+
+        if start_resp.status_code >= 400:
+            return []
+
+        run_data = (start_resp.json() or {}).get("data") or {}
+        run_id = run_data.get("id")
+        dataset_id = run_data.get("defaultDatasetId")
+        if not run_id or not dataset_id:
+            return []
+
+        try:
+            status_resp = await self.client.get(
+                f"{base_url}/actor-runs/{run_id}",
+                params={"token": apify_token},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Apify status poll failed: %s", exc)
+            return []
+
+        if status_resp.status_code >= 400:
+            return []
+
+        status = (status_resp.json() or {}).get("data", {}).get("status")
+        if status != "SUCCEEDED":
+            return []
+
+        try:
+            dataset_resp = await self.client.get(
+                f"{base_url}/datasets/{dataset_id}/items",
+                params={"token": apify_token},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Apify reply dataset fetch failed: %s", exc)
+            return []
+
+        if dataset_resp.status_code >= 400:
+            return []
+
+        rows = dataset_resp.json() or []
+
+        min_likes = int(self.twitter_config.reply_min_likes or 0)
+        max_n = int(self.twitter_config.max_replies_per_tweet or 0)
+        if max_n <= 0:
+            return []
+
+        scored: list[tuple[int, str]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            likes = int(row.get("favorite_count") or 0)
+            replies = int(row.get("reply_count") or 0)
+            if likes < min_likes:
+                continue
+            user = row.get("user") or {}
+            handle = (
+                (user.get("handle") if isinstance(user, dict) else None)
+                or row.get("handle")
+                or "anon"
+            ).lstrip("@")
+            text = (row.get("text") or "").strip()
+            score = likes + replies * 2
+            line = f"[@{handle} | ❤️ {likes} | 💬 {replies}] {text}"
+            scored.append((score, line))
+
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [line for _, line in scored[:max_n]]
+
+    @staticmethod
+    def append_discussion_content(item: ContentItem, reply_lines: list[str]) -> bool:
+        """Append ``reply_lines`` under a ``--- Top Comments ---`` marker.
+
+        Mutates ``item.content`` in-place and returns ``True`` when content was
+        appended. Returns ``False`` when ``reply_lines`` is empty so that
+        callers can short-circuit downstream rendering.
+        """
+        if not reply_lines:
+            return False
+        sep = "\n\n--- Top Comments ---\n"
+        item.content = (item.content or "").rstrip() + sep + "\n".join(reply_lines)
+        return True
