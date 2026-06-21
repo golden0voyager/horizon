@@ -449,15 +449,32 @@ class _FakeMouse:
 
 
 class _FakePage:
-    """Minimal Playwright Page stand-in: capture ``page.on(...)`` handlers
-    + dispatch canned GraphQL responses via :meth:`dispatch`.
+    """Minimal Playwright Page stand-in: capture ``page.on`` + ``page.route``
+    handlers, dispatch canned GraphQL responses (:meth:`dispatch`) and
+    canned route requests (:meth:`dispatch_route`).
     """
 
     def __init__(self) -> None:
         self._handlers: list[tuple[str, Any]] = []
+        self._route_handlers: list[tuple[str, Any]] = []
         self.goto_calls: list[str] = []
         self.evaluate_calls: list[str] = []
         self.evaluate_return: Any = ""
+        # When set, ``evaluate`` pops from this list on every call (for tests
+        # that need to flip the body-text return across iterations, e.g.
+        # ``test_scrape_user_reloads_on_error_page``). Once the list is
+        # drained ``evaluate`` returns the empty string so the error-page
+        # keyword match (``Retry``/``Something went wrong``/
+        # ````/``\u91cd\u65b0\u52a0\u8f7d``) stops firing on subsequent iterations.
+        self.evaluate_return_list: list[Any] | None = None
+        # Captured route-handler decisions: each entry is
+        # ``(url, resource_type)``; lets tests assert which URLs were
+        # blocked vs. passed through.
+        self.route_aborted: list[tuple[str, str]] = []
+        self.route_continued: list[tuple[str, str]] = []
+        # Captured ``page.reload(**kw)`` invocations for the error-page
+        # recovery branch.
+        self.reload_calls: list[dict[str, Any]] = []
         self.mouse = _FakeMouse()
 
     def on(self, event: str, handler: Any) -> None:
@@ -485,16 +502,27 @@ class _FakePage:
             # Used for the login-gate detection (BEFORE the while loop) AND
             # for the error-page reload detection (inside iter body). The
             # production keyword check is ``any(k in body_text.lower() ...)``
-            # so any non-empty ``evaluate_return`` test override works.
+            # so any non-empty value triggers a reload.
+            if self.evaluate_return_list is not None:
+                if not self.evaluate_return_list:
+                    return ""
+                return self.evaluate_return_list.pop(0)
             return self.evaluate_return
         # window.scrollBy result is unused by production.
         return ""
 
     async def route(self, pattern: str, handler: Any) -> None:
-        pass
+        # Production registers a single ``page.route("**/*", route_handler)``
+        # call inside ``_scrape_user``. We record the handler so that
+        # ``dispatch_route`` can synthesize fake ``Route`` instances for
+        # representative URLs / resource_types and observe whether
+        # ``route.abort()`` or ``route.continue_()`` was called.
+        self._route_handlers.append((pattern, handler))
 
     async def reload(self, **kw: Any) -> None:
-        pass
+        # Production rerun-after-error-page: capture the kwargs for assertion.
+        # ``kw`` typically contains ``wait_until`` and ``timeout``.
+        self.reload_calls.append(kw)
 
     async def close(self) -> None:
         pass
@@ -510,6 +538,22 @@ class _FakePage:
             if event_name == "response":
                 await handler(response)
 
+    async def dispatch_route(self, url: str, resource_type: str) -> None:
+        """Invoke every registered route handler with a ``_FakeRoute`` matching
+        ``(url, resource_type)``. Mirrors how Playwright would invoke
+        ``route_handler(route)`` when the actual request matches the
+        pattern. Each handler's ``route.abort()`` / ``route.continue_()``
+        call is recorded onto ``route_aborted`` / ``route_continued``.
+        """
+        for _pattern, handler in list(self._route_handlers):
+            fake_route = _FakeRoute(
+                url=url,
+                resource_type=resource_type,
+                aborted_list=self.route_aborted,
+                continued_list=self.route_continued,
+            )
+            await handler(fake_route)
+
 
 class _FakeContext:
     """Playwright Browser context stand-in: returns our single ``_FakePage``."""
@@ -519,6 +563,41 @@ class _FakeContext:
 
     async def new_page(self) -> _FakePage:
         return self.page
+
+
+class _FakeRouteRequest:
+    """Production's ``route.request`` — exposes ``resource_type`` + ``url``."""
+
+    def __init__(self, url: str, resource_type: str) -> None:
+        self.url = url
+        self.resource_type = resource_type
+
+
+class _FakeRoute:
+    """``page.route(pattern, handler)`` capture target.
+
+    Production's ``route_handler`` reads ``route.request.resource_type``
+    and ``route.request.url`` then calls ``await route.abort()`` or
+    ``await route.continue_()``. Both decisions get appended onto the
+    supplied lists so tests can assert which URLs were blocked.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        resource_type: str,
+        aborted_list: list[tuple[str, str]],
+        continued_list: list[tuple[str, str]],
+    ) -> None:
+        self.request = _FakeRouteRequest(url, resource_type)
+        self._aborted = aborted_list
+        self._continued = continued_list
+
+    async def abort(self) -> None:
+        self._aborted.append((self.request.url, self.request.resource_type))
+
+    async def continue_(self) -> None:
+        self._continued.append((self.request.url, self.request.resource_type))
 
 
 def _wrap_tweet_envelope(tweet: dict[str, Any]) -> dict[str, Any]:
@@ -899,3 +978,175 @@ def test_scrape_user_logs_login_gate(
     assert out is None
     messages = "\n".join(record.getMessage() for record in caplog.records)
     assert "login gate" in messages.lower()
+
+
+# ---------------------------------------------------------------------------
+# 3 Layer 1 tests closing the 6.63pp coverage gap on ``_scrape_user``:
+# ``test_scrape_user_routes_abort_media_and_analytics_but_passes_through``,
+# ``test_scrape_user_reloads_on_error_page``, and
+# ``test_scrape_user_returns_empty_when_all_outside_window`` — together they
+# cover the route-handler abort/continue branches, the in-loop error-page
+# reload call, and the time-window-dropped-everything → ``return []``
+# branch.
+# ---------------------------------------------------------------------------
+
+
+def test_scrape_user_routes_abort_media_and_analytics_but_passes_through(
+    _patch_scrape_clocks: None,
+) -> None:
+    """Production's ``route_handler`` inside ``_scrape_user`` aborts:
+
+    - any request with ``resource_type`` in ``("media", "image", "video")``,
+    - any request whose URL contains one of
+      ``"google-analytics"``, ``"doubleclick"``, or ``"scribe.twitter.com"``,
+
+    and continues everything else through to the upstream page. Dispatch
+    fake routes covering each branch and assert the precise abort/continue
+    split.
+    """
+    page = _FakePage()
+    ctx = _FakeContext(page)
+    cfg = TwitterConfig()
+    scraper = TwitterScraper(cfg)
+    since = datetime(2026, 1, 1, tzinfo=UTC)
+
+    async def _runner() -> list[dict[str, Any]] | None:
+        task = asyncio.create_task(scraper._scrape_user(ctx, "alice", since))
+        # Yield enough cycles for production to register ``page.on`` +
+        # ``page.route`` + run pre-loop setup.
+        await _yield_n(50)
+        # Dispatch a representative sample of routes that the production
+        # ``route_handler`` encounters on a real x.com page.
+        await page.dispatch_route("https://pbs.twimg.com/media/aaa.jpg", resource_type="image")
+        await page.dispatch_route(
+            "https://video.twimg.com/ext_tw_video/123/pu/vid.mp4",
+            resource_type="video",
+        )
+        await page.dispatch_route("https://pbs.twimg.com/media/bbb.mp4", resource_type="media")
+        await page.dispatch_route("https://www.google-analytics.com/collect?v=1", resource_type="xhr")
+        await page.dispatch_route("https://secure.adnxs.com/doubleclick?id=42", resource_type="xhr")
+        await page.dispatch_route("https://scribe.twitter.com/scribe?log=1", resource_type="xhr")
+        await page.dispatch_route("https://api.x.com/1.1/users/show.json", resource_type="xhr")
+        # Now dispatch a valid GraphQL response so the loop exits via
+        # ``return result`` with a single in-window tweet.
+        valid = _make_tweet_payload(
+            tweet_id="1001",
+            text="hello",
+            created_at="Fri Jan 02 12:00:00 +0000 2026",
+        )
+        await page.dispatch(
+            "https://x.com/i/api/graphql/abc/UserTweets?variables=foo",
+            _wrap_tweet_envelope(valid),
+        )
+        return await task
+
+    out = asyncio.run(_runner())
+
+    assert out is not None
+    assert len(out) == 1
+    assert out[0]["tweet_id"] == "1001"
+
+    aborted_urls = [u for u, _ in page.route_aborted]
+    continued_urls = [u for u, _ in page.route_continued]
+
+    # resource_type in {image, video, media} → abort
+    assert "https://pbs.twimg.com/media/aaa.jpg" in aborted_urls
+    assert "https://video.twimg.com/ext_tw_video/123/pu/vid.mp4" in aborted_urls
+    assert "https://pbs.twimg.com/media/bbb.mp4" in aborted_urls
+    # google-analytics / doubleclick / scribe.twitter.com keyword match → abort
+    assert "https://www.google-analytics.com/collect?v=1" in aborted_urls
+    assert "https://secure.adnxs.com/doubleclick?id=42" in aborted_urls
+    assert "https://scribe.twitter.com/scribe?log=1" in aborted_urls
+    # the rest → continue
+    assert "https://api.x.com/1.1/users/show.json" in continued_urls
+    # sanity: the media URL was aborted, not continued
+    assert "https://pbs.twimg.com/media/aaa.jpg" not in continued_urls
+    # sanity: counts
+    assert len(page.route_aborted) == 6
+    assert len(page.route_continued) == 1
+
+
+def test_scrape_user_reloads_on_error_page(
+    _patch_scrape_clocks: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Production's in-loop error-page detection: if the body text contains
+    ``"Retry"``, ``"Something went wrong"``, ``"\u51fa\u9519\u4e86"``, or
+    ``"\u91cd\u65b0\u52a0\u8f7d"``, production calls
+    ``await page.reload(wait_until="load", timeout=30000)`` followed by
+    ``await asyncio.sleep(5)``.
+
+    Setup:
+
+    - ``evaluate_return_list = ["", "Something went wrong"]`` — first
+      ``document.body`` evaluate (pre-loop login-gate check) returns ``""``
+      (no login gate); second (iter 1 in-loop reload-detection) returns
+      ``"Something went wrong"`` and triggers a reload.
+    - Per-test ``_LoopErrorPage`` advances ``time()`` at 30 s/call so the
+      ``while (...) < 60`` bound trips in 2 iterations, letting the
+      function reach the post-loop ``if not graphql_tweets: return None``
+      branch without re-entering the loop forever.
+    """
+    page = _FakePage()
+    page.evaluate_return_list = ["", "Something went wrong"]
+    ctx = _FakeContext(page)
+    cfg = TwitterConfig()
+    scraper = TwitterScraper(cfg)
+    since = datetime(2026, 1, 1, tzinfo=UTC)
+
+    _n = [0]
+
+    class _LoopErrorPage:
+        def time(self) -> float:
+            _n[0] += 1
+            # 1st call: start_time = 0
+            # 2nd call: iter 1 while-check = 30 (enter)
+            # 3rd call: iter 2 while-check = 60 (NOT < 60 → exit)
+            return (_n[0] - 1) * 30.0
+
+    monkeypatch.setattr(
+        "src.scrapers.twitter.asyncio.get_event_loop",
+        lambda: _LoopErrorPage(),
+    )
+
+    with caplog.at_level("INFO", logger="src.scrapers.twitter"):
+        out = asyncio.run(scraper._scrape_user(ctx, "alice", since))
+
+    assert out is None
+    assert len(page.reload_calls) == 1, (
+        f"expected exactly one reload after the error-page detection; got {page.reload_calls!r}"
+    )
+    assert page.reload_calls[0]["wait_until"] == "load"
+    assert page.reload_calls[0]["timeout"] == 30000
+
+
+def test_scrape_user_returns_empty_when_all_outside_window(
+    _patch_scrape_clocks: None,
+) -> None:
+    """All dispatched tweets have ``created_at`` BEFORE ``since`` → the
+    time-window filter strips every entry → production reaches the
+    ``if result: return slice; else: return []`` branch and logs
+    ``"intercepted %d tweets but all outside time window"`` before
+    returning ``[]`` (NOT ``None``).
+    """
+    since = datetime(2026, 6, 1, tzinfo=UTC)  # late cutoff
+    out = _drive_scrape_user(
+        [
+            _make_tweet_payload(
+                tweet_id="OLD1",
+                text="oldest",
+                created_at="Thu Jan 01 12:00:00 +0000 2026",
+            ),
+            _make_tweet_payload(
+                tweet_id="OLD2",
+                text="second-oldest",
+                created_at="Fri Jan 02 12:00:00 +0000 2026",
+            ),
+        ],
+        since,
+    )
+    assert out == []
+    # NOTE: not None — production returns ``[]`` here, distinguishing from
+    # the post-loop ``return None`` branch (the no-GraphQL path).
+    assert out is not None
