@@ -5,13 +5,13 @@ from src.services.email import EmailManager
 
 
 class FakeSMTP:
-    instances = []
+    instances: list["FakeSMTP"] = []
 
-    def __init__(self, server, port):
+    def __init__(self, server: str, port: int) -> None:
         self.server = server
         self.port = port
-        self.login_calls = []
-        self.messages = []
+        self.login_calls: list[tuple[str, str]] = []
+        self.messages: list[MIMEMultipart] = []
         FakeSMTP.instances.append(self)
 
     def __enter__(self):
@@ -28,9 +28,9 @@ class FakeSMTP:
 
 
 class FakeIMAP:
-    instances = []
+    instances: list[tuple[str, int]] = []
 
-    def __init__(self, server, port):
+    def __init__(self, server: str, port: int) -> None:
         FakeIMAP.instances.append((server, port))
 
 
@@ -174,3 +174,663 @@ def test_check_subscriptions_skips_imap_when_disabled(monkeypatch):
     manager.check_subscriptions(storage_manager=object())
 
     assert FakeIMAP.instances == []
+
+
+def test_check_subscriptions_skips_when_email_disabled(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeIMAP.instances = []
+
+    config = _email_config(enabled=False)
+    manager = EmailManager(config)
+
+    manager.check_subscriptions(storage_manager=object())
+
+    assert FakeIMAP.instances == []
+
+
+def test_check_subscriptions_adds_new_subscriber(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeSMTP.instances = []
+
+    config = _email_config(imap_enabled=True, subscribe_keyword="SUBSCRIBE")
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            if "SUBSCRIBE" in criteria:
+                return "OK", [b"101"]
+            return "OK", [b""]
+
+        def fetch(self, email_id, parts):
+            msg_body = (
+                b"From: newuser@example.com\r\n"
+                b"Subject: SUBSCRIBE\r\n"
+                b"\r\n"
+            )
+            return "OK", [(b"101", msg_body)]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    class FakeStorage:
+        def __init__(self):
+            self._subs = []
+
+        def load_subscribers(self):
+            return list(self._subs)
+
+        def add_subscriber(self, email):
+            self._subs.append(email)
+
+        def remove_subscriber(self, email):
+            self._subs.remove(email)
+
+    storage = FakeStorage()
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=storage)
+
+    assert "newuser@example.com" in storage.load_subscribers()
+    assert len(FakeSMTP.instances) == 1
+    assert FakeSMTP.instances[0].messages[0]["To"] == "newuser@example.com"
+
+
+def test_check_subscriptions_skips_noreply_addresses(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeSMTP.instances = []
+
+    config = _email_config(imap_enabled=True, subscribe_keyword="SUBSCRIBE")
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            if "SUBSCRIBE" in criteria:
+                return "OK", [b"101"]
+            return "OK", [b""]
+
+        def fetch(self, email_id, parts):
+            msg_body = (
+                b"From: noreply@spam.com\r\n"
+                b"Subject: SUBSCRIBE\r\n"
+                b"\r\n"
+            )
+            return "OK", [(b"101", msg_body)]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    storage = FakeStorage()
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=storage)
+
+    assert storage.load_subscribers() == []
+    assert FakeSMTP.instances == []
+
+
+def test_check_subscriptions_removes_unsubscriber(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeSMTP.instances = []
+
+    config = _email_config(
+        imap_enabled=True,
+        subscribe_keyword="SUBSCRIBE",
+        unsubscribe_keyword="UNSUBSCRIBE",
+    )
+
+    class FakeStorage:
+        def __init__(self):
+            self._subs = ["olduser@example.com"]
+
+        def load_subscribers(self):
+            return list(self._subs)
+
+        def add_subscriber(self, email):
+            self._subs.append(email)
+
+        def remove_subscriber(self, email):
+            self._subs.remove(email)
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            if "UNSUBSCRIBE" in criteria:
+                return "OK", [b"202"]
+            return "OK", [b""]
+
+        def fetch(self, email_id, parts):
+            msg_body = (
+                b"From: olduser@example.com\r\n"
+                b"Subject: UNSUBSCRIBE\r\n"
+                b"\r\n"
+            )
+            return "OK", [(b"202", msg_body)]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    storage = FakeStorage()
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=storage)
+
+    assert "olduser@example.com" not in storage.load_subscribers()
+    assert len(FakeSMTP.instances) == 1
+
+
+def test_check_subscriptions_handles_imap_exception(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+
+    class BrokenIMAP:
+        def __init__(self, server, port):
+            raise ConnectionError("IMAP down")
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", BrokenIMAP)
+
+    config = _email_config(imap_enabled=True)
+    manager = EmailManager(config)
+
+    manager.check_subscriptions(storage_manager=object())
+
+
+def test_check_subscriptions_skips_non_matching_subject(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeSMTP.instances = []
+
+    config = _email_config(imap_enabled=True, subscribe_keyword="SUBSCRIBE")
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            if "SUBSCRIBE" in criteria:
+                return "OK", [b"101"]
+            return "OK", [b""]
+
+        def fetch(self, email_id, parts):
+            msg_body = (
+                b"From: user@example.com\r\n"
+                b"Subject: RANDOM\r\n"
+                b"\r\n"
+            )
+            return "OK", [(b"101", msg_body)]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    storage = FakeStorage()
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=storage)
+
+    assert storage.load_subscribers() == []
+
+
+def test_check_subscriptions_skips_already_subscribed(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeSMTP.instances = []
+
+    config = _email_config(imap_enabled=True, subscribe_keyword="SUBSCRIBE")
+
+    class FakeStorage:
+        def __init__(self):
+            self._subs = ["existing@example.com"]
+
+        def load_subscribers(self):
+            return list(self._subs)
+
+        def add_subscriber(self, email):
+            self._subs.append(email)
+
+        def remove_subscriber(self, email):
+            self._subs.remove(email)
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            if "SUBSCRIBE" in criteria:
+                return "OK", [b"101"]
+            return "OK", [b""]
+
+        def fetch(self, email_id, parts):
+            msg_body = (
+                b"From: existing@example.com\r\n"
+                b"Subject: SUBSCRIBE\r\n"
+                b"\r\n"
+            )
+            return "OK", [(b"101", msg_body)]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    storage = FakeStorage()
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=storage)
+
+    assert storage.load_subscribers() == ["existing@example.com"]
+    assert FakeSMTP.instances == []
+
+
+def test_check_subscriptions_skips_not_subscribed_unsub(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeSMTP.instances = []
+
+    config = _email_config(
+        imap_enabled=True,
+        subscribe_keyword="SUBSCRIBE",
+        unsubscribe_keyword="UNSUBSCRIBE",
+    )
+
+    class FakeStorage:
+        def __init__(self):
+            self._subs = []
+
+        def load_subscribers(self):
+            return list(self._subs)
+
+        def add_subscriber(self, email):
+            self._subs.append(email)
+
+        def remove_subscriber(self, email):
+            self._subs.remove(email)
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            if "UNSUBSCRIBE" in criteria:
+                return "OK", [b"202"]
+            return "OK", [b""]
+
+        def fetch(self, email_id, parts):
+            msg_body = (
+                b"From: stranger@example.com\r\n"
+                b"Subject: UNSUBSCRIBE\r\n"
+                b"\r\n"
+            )
+            return "OK", [(b"202", msg_body)]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    storage = FakeStorage()
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=storage)
+
+    assert FakeSMTP.instances == []
+
+
+def test_check_subscriptions_skips_email_without_at_sign(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeSMTP.instances = []
+
+    config = _email_config(imap_enabled=True, subscribe_keyword="SUBSCRIBE")
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            if "SUBSCRIBE" in criteria:
+                return "OK", [b"101"]
+            return "OK", [b""]
+
+        def fetch(self, email_id, parts):
+            msg_body = (
+                b"From: badsender\r\n"
+                b"Subject: SUBSCRIBE\r\n"
+                b"\r\n"
+            )
+            return "OK", [(b"101", msg_body)]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    storage = FakeStorage()
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=storage)
+
+    assert storage.load_subscribers() == []
+
+
+def test_send_daily_summary_skips_when_not_enabled(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    config = _email_config(enabled=False)
+    manager = EmailManager(config)
+
+    manager.send_daily_summary("# Hello", "Daily", ["user@example.com"])
+
+    assert FakeSMTP.instances == []
+
+
+def test_send_daily_summary_skips_when_no_subscribers(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+
+    manager.send_daily_summary("# Hello", "Daily", [])
+
+    assert FakeSMTP.instances == []
+
+
+def test_send_daily_summary_sends_to_multiple_subscribers(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    subs = ["a@example.com", "b@example.com", "c@example.com"]
+
+    manager.send_daily_summary("# Hello", "Daily", subs)
+
+    smtp = FakeSMTP.instances[0]
+    assert len(smtp.messages) == 3
+    recipients = [m["To"] for m in smtp.messages]
+    assert recipients == subs
+
+
+def test_send_daily_summary_handles_smtp_exception(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+
+    class BrokenSMTP:
+        def __init__(self, server, port):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def login(self, user, pwd):
+            raise ConnectionError("SMTP down")
+
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", BrokenSMTP)
+
+    manager = EmailManager(_email_config())
+
+    manager.send_daily_summary("# Hello", "Daily", ["user@example.com"])
+
+
+def test_send_daily_summary_handles_individual_send_failure(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+
+    class FailOnceSMTP:
+        def __init__(self, server, port):
+            self.call_count = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def login(self, user, pwd):
+            pass
+
+        def send_message(self, msg):
+            self.call_count += 1
+            if self.call_count == 1:
+                raise RuntimeError("Send failed")
+
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FailOnceSMTP)
+
+    manager = EmailManager(_email_config())
+
+    manager.send_daily_summary("# Hello", "Daily", ["a@example.com", "b@example.com"])
+
+
+def test_send_reply_handles_smtp_exception(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+
+    class BrokenSMTP:
+        def __init__(self, server, port):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def login(self, user, pwd):
+            pass
+
+        def send_message(self, msg):
+            raise RuntimeError("Send failed")
+
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", BrokenSMTP)
+
+    manager = EmailManager(_email_config())
+    manager._send_reply("test@example.com", "Subject", "Body")
+
+
+def test_send_reply_sends_correct_message(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+    manager._send_reply("test@example.com", "Subj", "Body text")
+
+    smtp = FakeSMTP.instances[0]
+    assert len(smtp.messages) == 1
+    msg = smtp.messages[0]
+    assert msg["To"] == "test@example.com"
+    assert msg["Subject"] == "Subj"
+
+
+def test_send_daily_summary_uses_fallback_when_markdown_missing(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.markdown", None)
+    FakeSMTP.instances = []
+
+    manager = EmailManager(_email_config())
+
+    manager.send_daily_summary("Hello", "Daily", ["user@example.com"])
+
+    smtp = FakeSMTP.instances[0]
+    html_part = smtp.messages[0].get_payload()[1]
+    html_body = html_part.get_payload(decode=True).decode()
+    assert "<pre>" in html_body
+
+
+def test_check_subscriptions_handles_no_sender(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+    FakeSMTP.instances = []
+
+    config = _email_config(imap_enabled=True, subscribe_keyword="SUBSCRIBE")
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            if "SUBSCRIBE" in criteria:
+                return "OK", [b"101"]
+            return "OK", [b""]
+
+        def fetch(self, email_id, parts):
+            msg_body = (
+                b"Subject: SUBSCRIBE\r\n"
+                b"\r\n"
+            )
+            return "OK", [(b"101", msg_body)]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    storage = FakeStorage()
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=storage)
+
+    assert storage.load_subscribers() == []
+
+
+def test_check_subscriptions_handles_empty_search_results(monkeypatch):
+    monkeypatch.setenv("EMAIL_PASSWORD", "secret")
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
+
+    config = _email_config(imap_enabled=True, subscribe_keyword="SUBSCRIBE")
+
+    class MockIMAP:
+        def __init__(self, server, port):
+            pass
+
+        def login(self, user, pwd):
+            pass
+
+        def select(self, mailbox):
+            return "OK", [b"0"]
+
+        def search(self, charset, criteria):
+            return "OK", [b""]
+
+        def close(self):
+            pass
+
+        def logout(self):
+            pass
+
+    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", MockIMAP)
+
+    manager = EmailManager(config)
+    manager.check_subscriptions(storage_manager=object())
+
+
+def test_init_warns_when_password_env_not_set(monkeypatch):
+    monkeypatch.delenv("EMAIL_PASSWORD", raising=False)
+    config = _email_config()
+    manager = EmailManager(config)
+    assert manager.pwd is None
+
+
+class FakeStorage:
+    def __init__(self):
+        self._subs = []
+
+    def load_subscribers(self):
+        return list(self._subs)
+
+    def add_subscriber(self, email):
+        self._subs.append(email)
+
+    def remove_subscriber(self, email):
+        self._subs.remove(email)
