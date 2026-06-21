@@ -261,3 +261,136 @@ def test_hz_mcp_service_get_effective_config_reports_unknown_sources(
     assert out["selected_sources"] == ["github"]
     assert out["unknown_sources"] == ["facebook", "mastodon"]
     assert out["horizon_path"] == str(tmp_path)
+
+
+def test_hz_mcp_service_total_fetched_returns_raw_count(
+    hz_mcp_service_root: HorizonPipelineService,
+) -> None:
+    run_id = hz_mcp_service_root.run_store.create_run("run-total")
+    hz_mcp_service_root.run_store.save_items(run_id, "raw", [{"id": 1}, {"id": 2}, {"id": 3}])
+
+    count = hz_mcp_service_root._total_fetched(run_id, fallback=0)
+    assert count == 3
+
+
+def test_hz_mcp_service_total_fetched_returns_fallback_on_error(
+    hz_mcp_service_root: HorizonPipelineService,
+) -> None:
+    run_id = hz_mcp_service_root.run_store.create_run("run-no-raw")
+
+    count = hz_mcp_service_root._total_fetched(run_id, fallback=99)
+    assert count == 99
+
+
+def test_hz_mcp_service_send_webhook_disabled(
+    hz_mcp_service_root: HorizonPipelineService,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    @dataclass
+    class _Ctx:
+        horizon_path: Path
+        config_path: Path
+        runtime: object
+        config: object
+
+    webhook_cfg = SimpleNamespace(enabled=False)
+    cfg = SimpleNamespace(webhook=webhook_cfg)
+
+    monkeypatch.setattr(
+        hz_mcp_service_root,
+        "_build_context",
+        lambda horizon_path, config_path, sources: (
+            _Ctx(horizon_path=tmp_path, config_path=tmp_path / "c.json", runtime=None, config=cfg),
+            [],
+            [],
+        ),
+    )
+
+    import asyncio
+    result = asyncio.run(hz_mcp_service_root.send_webhook(date="2026-01-01"))
+    assert result["sent"] is False
+    assert "not enabled" in result["reason"].lower()
+
+
+def test_hz_mcp_service_send_webhook_no_config(
+    hz_mcp_service_root: HorizonPipelineService,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    @dataclass
+    class _Ctx:
+        horizon_path: Path
+        config_path: Path
+        runtime: object
+        config: object
+
+    cfg = SimpleNamespace(webhook=None)
+
+    monkeypatch.setattr(
+        hz_mcp_service_root,
+        "_build_context",
+        lambda horizon_path, config_path, sources: (
+            _Ctx(horizon_path=tmp_path, config_path=tmp_path / "c.json", runtime=None, config=cfg),
+            [],
+            [],
+        ),
+    )
+
+    import asyncio
+    result = asyncio.run(hz_mcp_service_root.send_webhook(date="2026-01-01"))
+    assert result["sent"] is False
+
+
+def test_hz_mcp_service_send_webhook_sends(
+    hz_mcp_service_root: HorizonPipelineService,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    @dataclass
+    class _Ctx:
+        horizon_path: Path
+        config_path: Path
+        runtime: object
+        config: object
+
+    webhook_cfg = SimpleNamespace(enabled=True, url_env="WEBHOOK_URL")
+    cfg = SimpleNamespace(webhook=webhook_cfg)
+
+    monkeypatch.setattr(
+        hz_mcp_service_root,
+        "_build_context",
+        lambda horizon_path, config_path, sources: (
+            _Ctx(horizon_path=tmp_path, config_path=tmp_path / "c.json", runtime=None, config=cfg),
+            [],
+            [],
+        ),
+    )
+
+    sent_vars = []
+
+    class FakeNotifier:
+        def __init__(self, config):
+            pass
+
+        async def notify(self, variables):
+            sent_vars.append(variables)
+
+    monkeypatch.setattr("src.mcp.service.WebhookNotifier", FakeNotifier)
+
+    import asyncio
+    result = asyncio.run(
+        hz_mcp_service_root.send_webhook(
+            date="2026-06-21",
+            language="zh",
+            important_items=5,
+            all_items=20,
+            result="success",
+            summary="test summary",
+        )
+    )
+    assert result["sent"] is True
+    assert result["variables"]["date"] == "2026-06-21"
+    assert result["variables"]["important_items"] == 5
+    assert result["variables"]["summary"] == "<12 chars>"
+    assert len(sent_vars) == 1

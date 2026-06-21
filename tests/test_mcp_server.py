@@ -14,6 +14,8 @@ brief to avoid future conftest collision.
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 
 from src.mcp import server
@@ -21,7 +23,7 @@ from src.mcp.errors import HorizonMcpError
 
 
 @pytest.fixture(name="hz_mcp_server_reset_metrics")
-def _hz_mcp_server_reset_metrics_fixture() -> None:
+def _hz_mcp_server_reset_metrics_fixture() -> Generator[None, None, None]:
     """Snapshot + restore server.METRICS around each test."""
 
     snapshot: dict = dict(server.METRICS)
@@ -129,3 +131,62 @@ def test_hz_mcp_server_resource_result_swallows_typed_error() -> None:
     out = server._resource_result("horizon://x", _typed_exc)
     assert out["ok"] is False
     assert out["error"]["code"] == "HZ_LOOKUP_FAILED"
+
+
+def test_hz_mcp_server_run_tool_success(
+    hz_mcp_server_reset_metrics: None,
+) -> None:
+    import asyncio
+
+    async def _ok_runner() -> dict:
+        return {"result": 42}
+
+    payload = asyncio.run(server._run_tool("test_tool", _ok_runner))
+    assert payload["ok"] is True
+    assert payload["tool"] == "test_tool"
+    assert payload["data"] == {"result": 42}
+    assert "duration_ms" in payload["meta"]
+    assert server.METRICS["tool_calls_total"] == 1
+    assert server.METRICS["tool_calls_success"] == 1
+
+
+def test_hz_mcp_server_run_tool_failure(
+    hz_mcp_server_reset_metrics: None,
+) -> None:
+    import asyncio
+
+    async def _fail_runner() -> dict:
+        raise RuntimeError("boom")
+
+    payload = asyncio.run(server._run_tool("test_tool", _fail_runner))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "HZ_INTERNAL_ERROR"
+    assert payload["error"]["message"] == "boom"
+    assert server.METRICS["tool_calls_total"] == 1
+    assert server.METRICS["tool_calls_failed"] == 1
+
+
+def test_hz_mcp_server_run_tool_typed_error(
+    hz_mcp_server_reset_metrics: None,
+) -> None:
+    import asyncio
+
+    async def _typed_runner() -> dict:
+        raise HorizonMcpError(code="HZ_CUSTOM", message="typed fail")
+
+    payload = asyncio.run(server._run_tool("test_tool", _typed_runner))
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "HZ_CUSTOM"
+    assert server.METRICS["tool_errors_by_code"]["HZ_CUSTOM"] == 1
+
+
+def test_hz_mcp_server_err_includes_duration() -> None:
+    payload = server._err("tool", ValueError("x"), duration_ms=5.5)
+    assert payload["meta"]["duration_ms"] == 5.5
+
+
+def test_hz_mcp_server_record_metrics_no_error_code() -> None:
+    server._record_metrics("c", ok=False, duration_ms=1.0)
+    assert server.METRICS["tool_calls_failed"] == 1
+    assert server.METRICS["tool_errors_by_code"] == {}
+    assert server.METRICS["last_error"] is None
