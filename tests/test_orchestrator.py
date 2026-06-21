@@ -232,7 +232,7 @@ def test_merge_topic_duplicates_passthrough_when_ai_response_unparseable(
     orchestrator: HorizonOrchestrator,
 ) -> None:
     items = [_build_item(ai_score=8.0, ai_summary="s1"), _build_item(ai_score=7.0, ai_summary="s2")]
-    with patch("src.ai.client.create_ai_client") as fake_create:
+    with patch("src.orchestrator.create_ai_client") as fake_create:
         fake_client = MagicMock()
         fake_client.complete = AsyncMock(return_value="not parseable json")
         fake_create.return_value = fake_client
@@ -257,7 +257,7 @@ def test_merge_topic_duplicates_drops_dup_indexes(
     ]
     ai_response = json.dumps({"duplicates": [[0, 1]]})
 
-    with patch("src.ai.client.create_ai_client") as fake_create:
+    with patch("src.orchestrator.create_ai_client") as fake_create:
         fake_client = MagicMock()
         fake_client.complete = AsyncMock(return_value=ai_response)
         fake_create.return_value = fake_client
@@ -274,7 +274,7 @@ def test_merge_topic_duplicates_swallows_ai_call_exception(
     orchestrator: HorizonOrchestrator,
 ) -> None:
     items = [_build_item(ai_score=8.0), _build_item(ai_score=7.0)]
-    with patch("src.ai.client.create_ai_client") as fake_create:
+    with patch("src.orchestrator.create_ai_client") as fake_create:
         fake_client = MagicMock()
         fake_client.complete = AsyncMock(side_effect=RuntimeError("api down"))
         fake_create.return_value = fake_client
@@ -400,7 +400,7 @@ def test_analyze_content_calls_analyzer_with_ai_client(
     orchestrator: HorizonOrchestrator,
 ) -> None:
     items = [_build_item()]
-    with patch("src.ai.client.create_ai_client") as fake_create, patch(
+    with patch("src.orchestrator.create_ai_client") as fake_create, patch(
         "src.ai.analyzer.ContentAnalyzer"
     ) as fake_analyzer_cls:
         fake_client = MagicMock()
