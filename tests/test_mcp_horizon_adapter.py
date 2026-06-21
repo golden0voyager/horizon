@@ -288,6 +288,34 @@ def test_hz_horizon_adapter_dicts_to_items_round_trip() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_hz_horizon_adapter_load_secrets_loads_generic_env_keys(
+    hz_horizon_adapter_minimal_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loads valid env keys from secrets JSON, ignores non-uppercase keys."""
+    secrets_path = hz_horizon_adapter_minimal_repo / "mcp.secrets.json"
+    secrets_path.write_text(
+        json.dumps({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-ant-test",
+                "CUSTOM_TOKEN": "token-123",
+                "lowercase": "ignored",
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(secrets_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CUSTOM_TOKEN", raising=False)
+
+    horizon_adapter._load_mcp_secrets(hz_horizon_adapter_minimal_repo, override=False)
+
+    import os
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-test"
+    assert os.environ["CUSTOM_TOKEN"] == "token-123"
+    assert "lowercase" not in os.environ
+
+
 def test_hz_horizon_adapter_load_secrets_rejects_non_string_value(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -361,6 +389,38 @@ def test_hz_horizon_adapter_resolve_secrets_path_explicit_missing(
     with pytest.raises(HorizonMcpError) as exc_info:
         horizon_adapter._resolve_secrets_path(tmp_path)
     assert exc_info.value.code == "HZ_SECRETS_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# load_config
+# ---------------------------------------------------------------------------
+
+
+def test_hz_horizon_adapter_load_config_expands_env_vars(
+    hz_horizon_adapter_minimal_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """load_config expands ${VAR} placeholders from environment."""
+    config_path = hz_horizon_adapter_minimal_repo / "config.json"
+    config_path.write_text(
+        json.dumps({
+            "ai": {
+                "provider": "openai",
+                "model": "test-model",
+                "api_key_env": "OPENAI_API_KEY",
+                "base_url": "${TEST_BASE_URL}/v1",
+            },
+            "sources": {},
+            "filtering": {},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TEST_BASE_URL", "https://api.example.com")
+
+    runtime = horizon_adapter.load_runtime(hz_horizon_adapter_minimal_repo)
+    config = horizon_adapter.load_config(runtime, config_path)
+
+    assert config.ai.base_url == "https://api.example.com/v1"
 
 
 # ---------------------------------------------------------------------------
