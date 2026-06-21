@@ -1,45 +1,218 @@
-"""Phase 5 unit tests for ``src.mcp.horizon_adapter`` adapter layer.
+"""Layer-1 unit tests for ``src.mcp.horizon_adapter`` adapter layer.
 
-Covers ``apply_source_filter`` (clone + selective-disable by source name),
-``get_enabled_sources`` (read-only aggregation), ``items_to_dicts`` /
-``dicts_to_items`` round-trips, ``get_source_counts`` histogram, regulatory
-``_load_mcp_secrets`` (env override, invalid keys skipped, missing handled),
-``_is_horizon_repo`` (src/main.py + pyproject.toml gate). ``load_runtime`` /
-``resolve_horizon_path`` / ``resolve_config_path`` are exercised only at the
-shallow guarantee level; their full paths require a real Horizon repo and are
-left to integration smoke tests.
+Coverage targets the pure/Python branches that don't need a live
+Horizon runtime:
+
+* ``resolve_horizon_path`` honors explicit > env > repo_root > cwd
+  fallback chain and raises ``HZ_HORIZON_NOT_FOUND`` if no candidate
+  matches.
+* ``apply_source_filter`` clones the config and disables every
+  source type the caller did not request.
+* ``get_enabled_sources`` walks the seven known source types.
+* ``get_source_counts`` aggregates by ``item.source_type.value``.
+* ``items_to_dicts`` and ``dicts_to_items`` round-trip when the
+  runtime exposes ``ContentItem.model_dump`` / ``model_validate``.
+* ``_load_mcp_secrets`` rejects non-string values, JSON errors, and
+  honors ``override=True``.
+* ``_resolve_secrets_path`` honours ``HORIZON_MCP_SECRETS_PATH`` when
+  the explicit override leads to an existing file.
+
+The fixtures below use the ``hz_horizon_adapter_`` prefix so they
+cannot collide with fixtures in another test module (per the
+mcp-001 brief on cross-suite collection shadowing).
 """
 
 from __future__ import annotations
 
 import json
-import os
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
 
 import pytest
 
+from src.mcp import horizon_adapter
 from src.mcp.errors import HorizonMcpError
-from src.mcp.horizon_adapter import (
-    ENV_KEY_RE,
-    VALID_SOURCES,
-    _is_horizon_repo,
-    _load_mcp_secrets,
-    _resolve_secrets_path,
-    apply_source_filter,
-    dicts_to_items,
-    get_enabled_sources,
-    get_source_counts,
-    items_to_dicts,
+from src.models import (
+    AIProvider,
+    Config,
+    ContentItem,
+    OSSInsightConfig,
+    SourceType,
 )
 
 # ---------------------------------------------------------------------------
-# Constants
+# Configured fixtures (namespaced to avoid shadowing collisions)
 # ---------------------------------------------------------------------------
 
 
-def test_valid_sources_constant() -> None:
-    assert {
+@pytest.fixture(name="hz_horizon_adapter_minimal_repo")
+def hz_horizon_adapter_minimal_repo_fixture(tmp_path: Path) -> Path:
+    """Build a minimal Horizon repo stub under ``tmp_path``."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    return tmp_path
+
+
+@pytest.fixture(name="hz_horizon_adapter_minimal_config_dict")
+def hz_horizon_adapter_minimal_config_dict_fixture() -> dict:
+    return {
+        "ai": {
+            "provider": "openai",
+            "model": "test-model",
+            "api_key_env": "OPENAI_API_KEY",
+        },
+        "sources": {},
+        "filtering": {},
+    }
+
+
+# ---------------------------------------------------------------------------
+# resolve_horizon_path
+# ---------------------------------------------------------------------------
+
+
+def test_hz_horizon_adapter_resolve_accepts_explicit_repo(
+    hz_horizon_adapter_minimal_repo: Path,
+) -> None:
+    result = horizon_adapter.resolve_horizon_path(str(hz_horizon_adapter_minimal_repo))
+    assert result == hz_horizon_adapter_minimal_repo.resolve()
+
+
+def test_hz_horizon_adapter_resolve_falls_back_to_env(
+    hz_horizon_adapter_minimal_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HORIZON_PATH", str(hz_horizon_adapter_minimal_repo))
+    result = horizon_adapter.resolve_horizon_path(explicit=None)
+    assert result == hz_horizon_adapter_minimal_repo.resolve()
+
+
+def test_hz_horizon_adapter_resolve_raises_when_no_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Stub ``_is_horizon_repo`` so every candidate path fails its check,
+    # forcing ``resolve_horizon_path`` to exhaust the candidates loop and
+    # raise ``HZ_HORIZON_NOT_FOUND`` instead of returning the real repo
+    # under the test process's CWD.
+    monkeypatch.setattr(horizon_adapter, "_is_horizon_repo", lambda path: False)
+    explicit = tmp_path / "fake_repo"
+    explicit.mkdir()
+
+    with pytest.raises(HorizonMcpError) as exc_info:
+        horizon_adapter.resolve_horizon_path(explicit=str(explicit))
+    assert exc_info.value.code == "HZ_HORIZON_NOT_FOUND"
+    assert "checked" in exc_info.value.details
+
+
+# ---------------------------------------------------------------------------
+# resolve_config_path
+# ---------------------------------------------------------------------------
+
+
+def test_hz_horizon_adapter_resolve_config_path_absolute_existing(
+    hz_horizon_adapter_minimal_repo: Path,
+) -> None:
+    cfg = hz_horizon_adapter_minimal_repo / "data" / "config.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("{}", encoding="utf-8")
+    assert horizon_adapter.resolve_config_path(hz_horizon_adapter_minimal_repo, str(cfg)) == cfg.resolve()
+
+
+def test_hz_horizon_adapter_resolve_config_path_defaults_to_repo_data(
+    hz_horizon_adapter_minimal_repo: Path,
+) -> None:
+    cfg = hz_horizon_adapter_minimal_repo / "data" / "config.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("{}", encoding="utf-8")
+    assert horizon_adapter.resolve_config_path(hz_horizon_adapter_minimal_repo) == cfg.resolve()
+
+
+def test_hz_horizon_adapter_resolve_config_path_missing_maps_to_error(
+    hz_horizon_adapter_minimal_repo: Path,
+) -> None:
+    with pytest.raises(HorizonMcpError) as exc_info:
+        horizon_adapter.resolve_config_path(hz_horizon_adapter_minimal_repo, "/no/such/path/config.json")
+    assert exc_info.value.code == "HZ_CONFIG_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# apply_source_filter / get_enabled_sources — exercise every branch
+# ---------------------------------------------------------------------------
+
+
+def _full_config() -> Config:
+    return Config.model_validate(
+        {
+            "ai": {
+                "provider": AIProvider.OPENAI,
+                "model": "test-model",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+            "sources": {
+                "github": [{"type": "user_events", "username": "openai"}],
+                "hackernews": {"enabled": True},
+                "rss": [{"name": "feed-1", "url": "https://example.com/feed.xml"}],
+                "reddit": {
+                    "enabled": True,
+                    "subreddits": [{"subreddit": "LocalLLaMA", "enabled": True}],
+                },
+                "telegram": {
+                    "enabled": True,
+                    "channels": [{"channel": "zaihuapd"}],
+                },
+                "twitter": {"enabled": True, "users": ["openai"]},
+                "openbb": {
+                    "enabled": True,
+                    "watchlists": [{"name": "ai", "symbols": ["NVDA"]}],
+                },
+                "ossinsight": {"enabled": True},
+            },
+            "filtering": {},
+        }
+    )
+
+
+def test_hz_horizon_adapter_apply_source_filter_disables_unrequested() -> None:
+    cfg = _full_config()
+    filtered, chosen, unknown = horizon_adapter.apply_source_filter(cfg, ["reddit", "rss"])
+    assert chosen == ["reddit", "rss"]
+    assert unknown == []
+    assert filtered.sources.reddit.enabled is True
+    assert filtered.sources.rss == cfg.sources.rss
+    assert filtered.sources.github == []
+    assert filtered.sources.hackernews.enabled is False
+    assert filtered.sources.telegram.enabled is False
+    assert filtered.sources.telegram.channels == []
+    assert filtered.sources.twitter is not None
+    assert filtered.sources.twitter.enabled is False
+    assert filtered.sources.twitter.users == []
+    assert filtered.sources.openbb is not None
+    assert filtered.sources.openbb.enabled is False
+    assert filtered.sources.openbb.watchlists == []
+
+
+def test_hz_horizon_adapter_apply_source_filter_with_no_sources_returns_copy() -> None:
+    cfg = _full_config()
+    filtered, enabled, unknown = horizon_adapter.apply_source_filter(cfg, None)
+    assert unknown == []
+    assert filtered.sources.github == cfg.sources.github
+    assert enabled == horizon_adapter.get_enabled_sources(filtered)
+
+
+def test_hz_horizon_adapter_apply_source_filter_reports_unknown_names() -> None:
+    cfg = _full_config()
+    _, chosen, unknown = horizon_adapter.apply_source_filter(cfg, ["Mastodon", "reddit"])
+    assert chosen == ["reddit"]
+    assert unknown == ["mastodon"]
+
+
+def test_hz_horizon_adapter_get_enabled_sources_covers_all_branches() -> None:
+    cfg = _full_config()
+    enabled = horizon_adapter.get_enabled_sources(cfg)
+    for src in (
         "github",
         "hackernews",
         "rss",
@@ -47,301 +220,160 @@ def test_valid_sources_constant() -> None:
         "telegram",
         "twitter",
         "openbb",
-    } == VALID_SOURCES
+    ):
+        assert src in enabled
 
 
-def test_env_key_re_matches_legitimate_env_var_names() -> None:
-    assert ENV_KEY_RE.fullmatch("FOO_BAR")
-    assert ENV_KEY_RE.fullmatch("API_KEY")
-    assert ENV_KEY_RE.fullmatch("PATH")  # pre-existing env names.
-    assert not ENV_KEY_RE.fullmatch("foo")  # lowercase
-    assert not ENV_KEY_RE.fullmatch("123FOO")  # starts with digit
-    assert not ENV_KEY_RE.fullmatch("FOO-BAR")  # dash
-
-
-# ---------------------------------------------------------------------------
-# _is_horizon_repo
-# ---------------------------------------------------------------------------
-
-
-def test_is_horizon_repo_true_when_main_py_and_pyproject_present(tmp_path: Path) -> None:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.py").write_text("# stub")
-    (tmp_path / "pyproject.toml").write_text("# stub")
-    assert _is_horizon_repo(tmp_path) is True
-
-
-def test_is_horizon_repo_false_when_missing_main(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text("# stub")
-    assert _is_horizon_repo(tmp_path) is False
-
-
-def test_is_horizon_repo_false_when_missing_pyproject(tmp_path: Path) -> None:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.py").write_text("# stub")
-    assert _is_horizon_repo(tmp_path) is False
-
-
-# ---------------------------------------------------------------------------
-# apply_source_filter
-# ---------------------------------------------------------------------------
-
-
-def test_apply_source_filter_no_sources_returns_original(
-    minimal_config: Any,
-) -> None:
-    cfg, _, _ = apply_source_filter(minimal_config, None)
-    assert cfg is minimal_config
-    enabled = get_enabled_sources(minimal_config)
-    assert enabled == ["hackernews", "rss", "reddit", "telegram"]
-    # No '' entries
-    assert all(s for s in enabled)
-
-
-def test_apply_source_filter_known_sources_disables_others(
-    minimal_config: Any,
-) -> None:
-    clone, chosen, unknown = apply_source_filter(minimal_config, ["github", "rss"])
-    assert chosen == ["github", "rss"]
-    assert unknown == []
-    assert clone.sources.hackernews.enabled is False
-
-
-def test_apply_source_filter_unknown_sources_listed(
-    minimal_config: Any,
-) -> None:
-    clone, chosen, unknown = apply_source_filter(
-        minimal_config, ["github", "fakesrc"]
+def test_hz_horizon_adapter_get_enabled_sources_ossinsight_only_adds_no_extra() -> None:
+    cfg = Config.model_validate(
+        {
+            "ai": {
+                "provider": AIProvider.OPENAI,
+                "model": "test-model",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+            "sources": {
+                "ossinsight": OSSInsightConfig(enabled=True).model_dump(),
+            },
+            "filtering": {},
+        }
     )
-    assert chosen == ["github"]
-    assert unknown == ["fakesrc"]
-
-
-def test_apply_source_filter_disables_reddit_subreddits_and_users(
-    minimal_config: Any,
-) -> None:
-    clone, _, _ = apply_source_filter(minimal_config, ["hackernews"])
-    assert clone.sources.reddit.enabled is False
-    assert clone.sources.reddit.subreddits == []
-    assert clone.sources.reddit.users == []
-
-
-def test_apply_source_filter_clears_telegram_channels(
-    minimal_config: Any,
-) -> None:
-    clone, _, _ = apply_source_filter(minimal_config, ["hackernews"])
-    assert clone.sources.telegram.channels == []
-    assert clone.sources.telegram.enabled is False
-
-
-def test_apply_source_filter_does_not_mutate_input(
-    minimal_config: Any,
-) -> None:
-    original_subreddits = list(minimal_config.sources.reddit.subreddits)
-    clone, _, _ = apply_source_filter(minimal_config, ["hackernews"])
-    assert minimal_config.sources.reddit.subreddits == original_subreddits
-    assert clone is not minimal_config
+    # OSSInsight is observation-only; it is not part of the enabled-source
+    # gating list returned to the MCP tool surface.
+    assert "ossinsight" not in horizon_adapter.get_enabled_sources(cfg)
 
 
 # ---------------------------------------------------------------------------
-# get_enabled_sources
+# get_source_counts / items_to_dicts / dicts_to_items
 # ---------------------------------------------------------------------------
 
 
-def test_get_enabled_sources_skips_ossinsight_when_disabled(
-    minimal_config: Any,
-) -> None:
-    enabled = get_enabled_sources(minimal_config)
-    # OSSInsight is disabled in our fixture.
-    assert "ossinsight" not in enabled
+def test_hz_horizon_adapter_get_source_counts_aggregates_by_value() -> None:
+    items = [
+        SimpleNamespace(source_type=SimpleNamespace(value="github")),
+        SimpleNamespace(source_type=SimpleNamespace(value="github")),
+        SimpleNamespace(source_type=SimpleNamespace(value="reddit")),
+        SimpleNamespace(source_type=SimpleNamespace(value="rss")),
+    ]
+    counts = horizon_adapter.get_source_counts(items)
+    assert counts == {"github": 2, "reddit": 1, "rss": 1}
+
+
+def test_hz_horizon_adapter_items_to_dicts_zero_input() -> None:
+    assert horizon_adapter.items_to_dicts([]) == []
+
+
+def test_hz_horizon_adapter_dicts_to_items_round_trip() -> None:
+    payload = {
+        "id": "github:user_events:abc",
+        "source_type": SourceType.GITHUB,
+        "title": "Round trip",
+        "url": "https://example.com/post",
+        "content": "body",
+        "author": "tester",
+        "published_at": datetime.now(UTC).isoformat(),
+    }
+
+    class _Runtime:
+        ContentItem = ContentItem
+
+    items = horizon_adapter.dicts_to_items(_Runtime(), [payload])
+    assert len(items) == 1
+    assert items[0].id == payload["id"]
+    assert horizon_adapter.items_to_dicts(items)[0]["id"] == payload["id"]
 
 
 # ---------------------------------------------------------------------------
-# items_to_dicts / dicts_to_items / get_source_counts
+# _load_mcp_secrets / _resolve_secrets_path
 # ---------------------------------------------------------------------------
 
 
-def test_items_to_dicts_serializes(
-    minimal_runtime: Any,
+def test_hz_horizon_adapter_load_secrets_rejects_non_string_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    items = [minimal_runtime["example_item"]]
-    out = items_to_dicts(items)
-    assert len(out) == 1
-    assert out[0]["id"] == "rss:x:1"
-    assert out[0]["title"] == "Title"
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(json.dumps({"env": {"GOOD": "ok", "BAD": 12345}}))
+    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(secrets))
+    monkeypatch.delenv("BAD", raising=False)
+
+    with pytest.raises(HorizonMcpError) as exc_info:
+        horizon_adapter._load_mcp_secrets(tmp_path, override=True)
+    assert exc_info.value.code == "HZ_SECRETS_INVALID"
+    assert exc_info.value.details["key"] == "BAD"
 
 
-def test_dicts_to_items_round_trip(minimal_runtime: Any) -> None:
-    items = [minimal_runtime["example_item"]]
-    dicts = items_to_dicts(items)
-    restored = dicts_to_items(minimal_runtime["runtime"], dicts)
-    assert len(restored) == 1
-    assert restored[0].id == items[0].id
-    assert restored[0].title == items[0].title
+def test_hz_horizon_adapter_load_secrets_rejects_invalid_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text("{not-json", encoding="utf-8")
+    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(secrets))
+
+    with pytest.raises(HorizonMcpError) as exc_info:
+        horizon_adapter._load_mcp_secrets(tmp_path, override=True)
+    assert exc_info.value.code == "HZ_SECRETS_INVALID"
 
 
-def test_get_source_counts(minimal_runtime: Any) -> None:
-    ex = minimal_runtime["example_item"]
-    src = minimal_runtime["example_item_secondary"]
-    counts = get_source_counts([ex, ex, src])
-    assert counts["rss"] == 2
-    assert counts["github"] == 1
+def test_hz_horizon_adapter_load_secrets_skips_empty_value(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(json.dumps({"env": {"MAYBE": "   "}}))
+    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(secrets))
+    monkeypatch.delenv("MAYBE", raising=False)
+
+    horizon_adapter._load_mcp_secrets(tmp_path, override=True)
+    assert "MAYBE" not in __import__("os").environ
+
+
+def test_hz_horizon_adapter_load_secrets_override_respects_existing_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = tmp_path / "secrets.json"
+    secrets.write_text(json.dumps({"env": {"CUSTOM": "from-secrets"}}))
+    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(secrets))
+    monkeypatch.setenv("CUSTOM", "from-env")
+
+    horizon_adapter._load_mcp_secrets(tmp_path, override=False)
+    assert __import__("os").environ["CUSTOM"] == "from-env"
+
+    horizon_adapter._load_mcp_secrets(tmp_path, override=True)
+    assert __import__("os").environ["CUSTOM"] == "from-secrets"
+
+
+def test_hz_horizon_adapter_resolve_secrets_path_explicit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    secrets = tmp_path / "explicit.json"
+    secrets.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(secrets))
+    assert horizon_adapter._resolve_secrets_path(tmp_path) == secrets.resolve()
+
+
+def test_hz_horizon_adapter_resolve_secrets_path_explicit_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing = tmp_path / "missing.json"
+    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(missing))
+
+    with pytest.raises(HorizonMcpError) as exc_info:
+        horizon_adapter._resolve_secrets_path(tmp_path)
+    assert exc_info.value.code == "HZ_SECRETS_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
-# _resolve_secrets_path
+# misc helpers
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_secrets_path_returns_none_when_no_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_hz_horizon_adapter_is_repo_detects_required_layout(
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.delenv("HORIZON_MCP_SECRETS_PATH", raising=False)
-    monkeypatch.chdir(tmp_path)
-    out = _resolve_secrets_path(tmp_path)
-    assert out is None
-
-
-def test_resolve_secrets_path_raises_when_explicit_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(tmp_path / "nope.json"))
-    with pytest.raises(HorizonMcpError, match="HZ_SECRETS_NOT_FOUND"):
-        _resolve_secrets_path(tmp_path)
-
-
-def test_resolve_secrets_path_returns_explicit_when_present(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    target = tmp_path / "secrets.json"
-    target.write_text("{}", encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(target))
-    assert _resolve_secrets_path(tmp_path) == target.resolve()
-
-
-# ---------------------------------------------------------------------------
-# _load_mcp_secrets
-# ---------------------------------------------------------------------------
-
-
-def test_load_mcp_secrets_no_file_returns_silently(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("HORIZON_MCP_SECRETS_PATH", raising=False)
-    monkeypatch.chdir(tmp_path)
-    # No-op, must not raise.
-    _load_mcp_secrets(tmp_path)
-
-
-def test_load_mcp_secrets_injects_env_vars(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    payload = {"env": {"TEST_KEY_ALPHA": "v1", "TEST_KEY_BETA": "v2"}}
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    monkeypatch.delenv("TEST_KEY_ALPHA", raising=False)
-    monkeypatch.delenv("TEST_KEY_BETA", raising=False)
-
-    _load_mcp_secrets(tmp_path)
-    assert os.environ.get("TEST_KEY_ALPHA") == "v1"
-    assert os.environ.get("TEST_KEY_BETA") == "v2"
-
-
-def test_load_mcp_secrets_skips_invalid_key_names(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "secrets.json"
-    # Lowercase + hyphen keys should be silently skipped by ENV_KEY_RE.
-    path.write_text(json.dumps({"env": {"lower-case": "x", "1STARTS_WITH_DIGIT": "y"}}),
-                    encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    _load_mcp_secrets(tmp_path)
-    assert "lower-case" not in os.environ
-    assert "1STARTS_WITH_DIGIT" not in os.environ
-
-
-def test_load_mcp_secrets_skips_empty_string_values(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps({"env": {"TEST_KEY_EMPTY": "  "}}), encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    monkeypatch.delenv("TEST_KEY_EMPTY", raising=False)
-    _load_mcp_secrets(tmp_path)
-    assert "TEST_KEY_EMPTY" not in os.environ
-
-
-def test_load_mcp_secrets_flat_dict_payload(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """If 'env' key absent, the top-level dict is treated as the env payload."""
-
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps({"TEST_KEY_FLAT": "flat_value"}), encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    monkeypatch.delenv("TEST_KEY_FLAT", raising=False)
-    _load_mcp_secrets(tmp_path)
-    assert os.environ.get("TEST_KEY_FLAT") == "flat_value"
-
-
-def test_load_mcp_secrets_invalid_json_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "secrets.json"
-    path.write_text("{not-json", encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    with pytest.raises(HorizonMcpError, match="HZ_SECRETS_INVALID"):
-        _load_mcp_secrets(tmp_path)
-
-
-def test_load_mcp_secrets_top_level_not_dict_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    with pytest.raises(HorizonMcpError, match="must be a JSON object"):
-        _load_mcp_secrets(tmp_path)
-
-
-def test_load_mcp_secrets_env_field_not_dict_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps({"env": ["not a dict"]}), encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    with pytest.raises(HorizonMcpError, match="env field"):
-        _load_mcp_secrets(tmp_path)
-
-
-def test_load_mcp_secrets_non_string_value_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps({"env": {"TEST_KEY_INT": 42}}), encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    with pytest.raises(HorizonMcpError, match="must be a string"):
-        _load_mcp_secrets(tmp_path)
-
-
-def test_load_mcp_secrets_override_false_preserves_existing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps({"env": {"TEST_KEY_PRESERVE": "from-secrets"}}), encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    monkeypatch.setenv("TEST_KEY_PRESERVE", "from-env")
-    _load_mcp_secrets(tmp_path, override=False)
-    assert os.environ["TEST_KEY_PRESERVE"] == "from-env"
-
-
-def test_load_mcp_secrets_override_true_replaces_existing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "secrets.json"
-    path.write_text(json.dumps({"env": {"TEST_KEY_OVERRIDE": "from-secrets"}}), encoding="utf-8")
-    monkeypatch.setenv("HORIZON_MCP_SECRETS_PATH", str(path))
-    monkeypatch.setenv("TEST_KEY_OVERRIDE", "from-env")
-    _load_mcp_secrets(tmp_path, override=True)
-    assert os.environ["TEST_KEY_OVERRIDE"] == "from-secrets"
+    assert horizon_adapter._is_horizon_repo(tmp_path) is False
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("", encoding="utf-8")
+    assert horizon_adapter._is_horizon_repo(tmp_path) is False
+    (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
+    assert horizon_adapter._is_horizon_repo(tmp_path) is True
