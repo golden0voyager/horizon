@@ -401,7 +401,7 @@ def test_analyze_content_calls_analyzer_with_ai_client(
 ) -> None:
     items = [_build_item()]
     with patch("src.orchestrator.create_ai_client") as fake_create, patch(
-        "src.ai.analyzer.ContentAnalyzer"
+        "src.orchestrator.ContentAnalyzer"
     ) as fake_analyzer_cls:
         fake_client = MagicMock()
         fake_create.return_value = fake_client
