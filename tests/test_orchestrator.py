@@ -251,8 +251,8 @@ def test_merge_topic_duplicates_drops_dup_indexes(
     orchestrator: HorizonOrchestrator,
 ) -> None:
     items = [
-        _build_item(ai_score=9.0, ai_summary="primary"),
-        _build_item(ai_score=8.0, ai_summary="dup of primary"),
+        _build_item(ai_score=9.0, ai_summary="primary", content="main content"),
+        _build_item(ai_score=8.0, ai_summary="dup of primary", content="dup content"),
         _build_item(ai_score=7.0, ai_summary="unique"),
     ]
     ai_response = json.dumps({"duplicates": [[0, 1]]})
@@ -267,7 +267,7 @@ def test_merge_topic_duplicates_drops_dup_indexes(
     assert len(out) == 2
     assert out[0].ai_summary == "primary"
     assert out[1].ai_summary == "unique"
-    assert "dup of primary" in (out[0].content or "")
+    assert "dup content" in out[0].content
 
 
 def test_merge_topic_duplicates_swallows_ai_call_exception(
