@@ -1,5 +1,7 @@
 """CLI entry point for Horizon."""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import logging
@@ -32,13 +34,27 @@ def print_banner():
     console.print(banner)
 
 
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Build the CLI parser and return parsed args.
+
+    Extracted from :func:`main` so tests can monkeypatch the seam directly,
+    bypassing the global ``argparse.ArgumentParser.parse_args`` import path
+    (which has produced flaky ``unrecognized arguments`` noise across CI
+    platforms and is brittle to any unrelated argparse change in conftest).
+    """
+
+    parser = argparse.ArgumentParser(
+        description="Horizon - AI-Driven Information Aggregation System",
+    )
+    parser.add_argument("--hours", type=int, help="Force fetch from last N hours")
+    return parser.parse_args(argv)
+
+
 def main():
     """Main CLI entry point."""
     print_banner()
 
-    parser = argparse.ArgumentParser(description="Horizon - AI-Driven Information Aggregation System")
-    parser.add_argument("--hours", type=int, help="Force fetch from last N hours")
-    args = parser.parse_args()
+    args = _parse_args()
 
     try:
         # Load environment variables from .env file
@@ -90,6 +106,7 @@ def main():
     except Exception as e:
         console.print(f"\n[bold red]❌ Fatal error: {e}[/bold red]")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
