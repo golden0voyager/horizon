@@ -343,8 +343,8 @@ def test_fetch_all_sources_invokes_all_configured_scrapers(
                 orchestrator.fetch_all_sources(datetime(2026, 1, 1, tzinfo=UTC))
             )
 
-    # 6 of 7 scrapers returned 1 item, reddit raised → still counted.
-    assert len(items) == 6
+    # 5 of 7 scrapers returned 1 item (github=[], reddit raised → 0), still counted.
+    assert len(items) == 5
 
 
 # ---------------------------------------------------------------------------
