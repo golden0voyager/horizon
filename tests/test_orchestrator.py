@@ -313,13 +313,13 @@ def test_fetch_all_sources_invokes_all_configured_scrapers(
     fake_item = _build_item()
 
     target_modules = {
-        "GitHubScraper": "src.scrapers.github.GitHubScraper",
-        "HackerNewsScraper": "src.scrapers.hackernews.HackerNewsScraper",
-        "RSSScraper": "src.scrapers.rss.RSSScraper",
-        "RedditScraper": "src.scrapers.reddit.RedditScraper",
-        "TelegramScraper": "src.scrapers.telegram.TelegramScraper",
-        "TwitterScraper": "src.scrapers.twitter.TwitterScraper",
-        "OSSInsightScraper": "src.scrapers.ossinsight.OSSInsightScraper",
+        "GitHubScraper": "src.orchestrator.GitHubScraper",
+        "HackerNewsScraper": "src.orchestrator.HackerNewsScraper",
+        "RSSScraper": "src.orchestrator.RSSScraper",
+        "RedditScraper": "src.orchestrator.RedditScraper",
+        "TelegramScraper": "src.orchestrator.TelegramScraper",
+        "TwitterScraper": "src.orchestrator.TwitterScraper",
+        "OSSInsightScraper": "src.orchestrator.OSSInsightScraper",
     }
     patches = []
     for class_name, target in target_modules.items():
