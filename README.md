@@ -24,7 +24,7 @@
 
 📡 Your own AI-powered news radar. Generates daily briefings in English & Chinese. | 构建你专属的 AI 新闻雷达
 
-[📖 Live Demo](https://thysrael.github.io/Horizon/) · [📋 Configuration Guide](https://thysrael.github.io/Horizon/configuration) · [简体中文](README_zh.md)
+[📖 Live Demo](https://thysrael.github.io/Horizon/) · [📋 Configuration Guide](https://thysrael.github.io/Horizon/configuration) · [简体中文](README_zh.md) · [日本語](README_ja.md)
 
 </div>
 
@@ -253,6 +253,36 @@ Minimal manual configuration:
   }
 }
 ```
+
+**Balanced digest (optional)**
+
+Limit the final digest size and prevent one category from dominating the
+results. Categories come from source configuration such as
+`sources.rss[].category`.
+
+```jsonc
+{
+  "filtering": {
+    "ai_score_threshold": 6.0,
+    "max_items": 20,
+    "category_groups": {
+      "ai": {
+        "limit": 5,
+        "categories": ["ai-news", "ai-tools", "machine-learning"]
+      },
+      "finance": {
+        "limit": 5,
+        "categories": ["finance", "business", "equities"]
+      }
+    },
+    "default_group": "other",
+    "default_group_limit": 3
+  }
+}
+```
+
+Group limits are applied after AI score filtering and before enrichment. If
+`category_groups` and `max_items` are omitted, filtering behaves as before.
 
 `api_key_env` must be the name of an environment variable, not the API key
 itself. Put the real secret in `.env`:

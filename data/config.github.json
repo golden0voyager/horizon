@@ -1,75 +1,44 @@
 {
   "version": "1.0",
   "ai": {
-    // AI 提供商: openai, ali, anthropic, gemini, azure, doubao, minimax, deepseek, modelscope, xiaomimimo, moonshotai, openrouter, groq, siliconflow, nvidia
-    // 系统已内置各平台的官方 Base URL。如果使用自定义地址，请在 base_url 中手动指定。
-    "provider": "sensenova",
-    // 多供应商 Fallback 链：当主供应商失败时自动降级到下一个
-    // 支持环境变量 HORIZON_AI_PROVIDER=sensenova,openrouter,gemini
-    "provider_chain": "sensenova,openrouter,gemini",
-    // 模型名称：请根据所选提供商填写对应的模型 ID（如 qwen-max, deepseek-chat, moonshot-v1-8k 等）
-    "model": "sensenova-6.7-flash-lite",
-    "base_url": "",
-    // 如果你需要使用特殊代理，系统会优先读取 .env 中的 {PROVIDER}_BASE_URL（如 DEEPSEEK_BASE_URL）。你也可以用 base_url_env 强制指定其他变量名。
-    "base_url_env": "",
-    // 环境变量：请在 .env 中设置对应的 API Key，并在此处填入变量名（如 DEEPSEEK_API_KEY）
-    "api_key_env": "SENSENOVA_API_KEY",
+    "provider": "openai",
+    "model": "gpt-4",
+    "api_key_env": "OPENAI_API_KEY",
     "temperature": 0.3,
-    // 适当减小 max_tokens (这是生成长度限制) 以提高稳定性
-    "max_tokens": 8192,
-    // 摘要生成的语言 (改为 ["zh"] 仅生成中文以节省 token)
-    "languages": [
-      "zh"
-    ]
+    "max_tokens": 4096,
+    "throttle_sec": 0,
+    "analysis_concurrency": 1,
+    "enrichment_concurrency": 1
+  },
+  "email": {
+    "enabled": false,
+    "smtp_server": "smtp.qq.com",
+    "smtp_port": 465,
+    "imap_server": "imap.qq.com",
+    "imap_port": 993,
+    "email_address": "xxx@qq.com",
+    "sender_name": "Horizon Daily",
+    "subscribe_keyword": "SUBSCRIBE",
+    "unsubscribe_keyword": "UNSUBSCRIBE"
   },
   "sources": {
     "github": [
       {
-        // 监控 OpenAI 官方动态
         "type": "user_events",
-        "username": "openai",
-        "enabled": true
-      },
-      {
-        // 监控 Anthropic 官方动态
-        "type": "user_events",
-        "username": "anthropic-ai",
-        "enabled": true
-      },
-      {
-        // 监控 DeepSeek 官方动态
-        "type": "user_events",
-        "username": "deepseek-ai",
-        "enabled": true
-      },
-      {
-        // 监控月之暗面 (Moonshot AI) 官方动态
-        "type": "user_events",
-        "username": "MoonshotAI",
-        "enabled": true
-      },
-      {
-        "type": "user_events",
-        "username": "karpathy",
+        "username": "torvalds",
         "enabled": true
       },
       {
         "type": "repo_releases",
-        "owner": "vllm-project",
-        "repo": "vllm",
-        "enabled": true
-      },
-      {
-        "type": "repo_releases",
-        "owner": "sgl-project",
-        "repo": "sglang",
+        "owner": "astral-sh",
+        "repo": "uv",
         "enabled": true
       }
     ],
     "hackernews": {
       "enabled": true,
-      "fetch_top_stories": 30,
-      "min_score": 150
+      "fetch_top_stories": 20,
+      "min_score": 100
     },
     "rss": [
       {
@@ -79,10 +48,10 @@
         "category": "ai-tools"
       },
       {
-        "name": "GitHub Trending - Daily",
-        "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
-        "enabled": true,
-        "category": "github-trending"
+        "name": "LWN.net (subscriber full-text)",
+        "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
+        "enabled": false,
+        "category": "linux"
       }
     ],
     "reddit": {
@@ -94,129 +63,69 @@
           "sort": "hot",
           "time_filter": "day",
           "fetch_limit": 15,
-          "min_score": 60
-        },
-        {
-          "subreddit": "LocalLLaMA",
-          "enabled": true,
-          "sort": "hot",
-          "time_filter": "day",
-          "fetch_limit": 15,
-          "min_score": 60
-        },
-        {
-          "subreddit": "artificial",
-          "enabled": true,
-          "sort": "hot",
-          "time_filter": "day",
-          "fetch_limit": 15,
           "min_score": 50
-        },
-        {
-          "subreddit": "OpenAI",
-          "enabled": true,
-          "sort": "hot",
-          "time_filter": "day",
-          "fetch_limit": 10,
-          "min_score": 30
-        },
-        {
-          "subreddit": "ClaudeAI",
-          "enabled": true,
-          "sort": "hot",
-          "time_filter": "day",
-          "fetch_limit": 10,
-          "min_score": 20
         }
       ],
-      "fetch_comments": 10,
-      "client_id_env": "REDDIT_CLIENT_ID",
-      "client_secret_env": "REDDIT_CLIENT_SECRET",
-      "user_agent": "Horizon-Aggregator/1.0"
-    },
-    "telegram": {
-      "enabled": true,
-      "channels": [
+      "users": [
         {
-          "channel": "zaihuapd",
+          "username": "iamthatis",
           "enabled": true,
-          "fetch_limit": 20
+          "sort": "new",
+          "fetch_limit": 10
         }
-      ]
+      ],
+      "fetch_comments": 5
     },
     "twitter": {
-      "enabled": true,
-      "users": [
-        "karpathy",
-        "ylecun",
-        "geoffreyhinton",
-        "ilyasut",
-        "lilianweng",
-        "fchollet",
-        "AndrewYNg",
-        "sama",
-        "demishassabis",
-        "DarioAmodei",
-        "satyanadella",
-        "jensenhuang",
-        "OpenAI",
-        "AnthropicAI",
-        "GoogleDeepMind",
-        "xAI",
-        "nvidia",
-        "deepseek_ai",
-        "Moonshot_AI",
-        "dotey",
-        "Bloomberg",
-        "Reuters",
-        "WSJ",
-        "FT",
-        "TheEconomist",
-        "GoldmanSachs",
-        "RayDalio",
-        "CathieDWood",
-        "DailyShot",
-        "Tesla",
-        "Waymo",
-        "SpaceX",
-        "BostonDynamics",
-        "figure_robot",
-        "UnitreeRobotics",
-        "hardmaru",
-        "CGTNOfficial",
-        "XHNews",
-        "CNNI",
-        "nytimesworld",
-        "techreview",
-        "theinformation",
-        "technology",
-        "business",
-        "WIRED"
-      ],
+      "enabled": false,
+      "users": ["karpathy", "ylecun"],
       "fetch_limit": 10,
       "fetch_reply_text": false,
       "max_replies_per_tweet": 3,
       "max_tweets_to_expand": 10,
-      "reply_min_likes": 5,
-      "cookie_dir": "data",
-      "cookie_file_pattern": "x_cookies_*.json"
+      "reply_min_likes": 5
+    },
+    "openbb": {
+      "enabled": false,
+      "fetch_filings": false,
+      "filings_provider": "sec",
+      "watchlists": [
+        {
+          "name": "megacaps",
+          "enabled": true,
+          "provider": "yfinance",
+          "fetch_limit": 20,
+          "category": "equities",
+          "symbols": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
+        }
+      ]
+    },
+    "ossinsight": {
+      "enabled": false,
+      "period": "past_24_hours",
+      "languages": ["All", "Python", "TypeScript"],
+      "keywords": [],
+      "min_stars": 10,
+      "max_items": 30
     }
   },
   "filtering": {
-    "ai_score_threshold": 8.0,
-    "time_window_hours": 24
+    "ai_score_threshold": 6.0,
+    "time_window_hours": 24,
+    "max_items": null,
+    "category_groups": {},
+    "default_group": "other",
+    "default_group_limit": null
   },
   "webhook": {
-    "enabled": true,
+    "enabled": false,
     "url_env": "HORIZON_WEBHOOK_URL",
-    "delivery": "summary_and_items",
-    "overview_position": "last",
-    "platform": "feishu",
-    "layout": "collapsible",
+    "delivery": "summary",
+    "overview_position": "first",
+    "platform": "generic",
+    "layout": "markdown",
     "fallback_layout": "markdown",
-    "languages": [
-      "zh"
-    ],
+    "languages": null,
     "request_body": {
       "msg_type": "interactive",
       "card": {
@@ -233,6 +142,13 @@
         },
         "body": {
           "elements": [
+            {
+              "tag": "markdown",
+              "content": "Horizon生成结果: #{result}\nHorizon日报重要资讯数量: #{important_items}/#{all_items}"
+            },
+            {
+              "tag": "hr"
+            },
             {
               "tag": "markdown",
               "content": "#{summary}"

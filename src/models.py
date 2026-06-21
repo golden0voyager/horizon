@@ -1,14 +1,12 @@
 """Core data models for Horizon."""
 
-import os
-from datetime import UTC, datetime
-from enum import StrEnum
-from typing import Any
-
-from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Optional, List, Dict, Any, Union
+from pydantic import BaseModel, HttpUrl, Field, field_validator
 
 
-class SourceType(StrEnum):
+class SourceType(str, Enum):
     """Supported information source types."""
 
     GITHUB = "github"
@@ -28,20 +26,20 @@ class ContentItem(BaseModel):
     source_type: SourceType
     title: str
     url: HttpUrl
-    content: str | None = None
-    author: str | None = None
+    content: Optional[str] = None
+    author: Optional[str] = None
     published_at: datetime
-    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
     # AI analysis results
-    ai_score: float | None = None  # 0-10 importance score
-    ai_reason: str | None = None
-    ai_summary: str | None = None
-    ai_tags: list[str] = Field(default_factory=list)
+    ai_score: Optional[float] = None  # 0-10 importance score
+    ai_reason: Optional[str] = None
+    ai_summary: Optional[str] = None
+    ai_tags: List[str] = Field(default_factory=list)
 
 
-class AIProvider(StrEnum):
+class AIProvider(str, Enum):
     """Supported AI providers."""
 
     ANTHROPIC = "anthropic"
@@ -52,58 +50,47 @@ class AIProvider(StrEnum):
     DOUBAO = "doubao"
     MINIMAX = "minimax"
     DEEPSEEK = "deepseek"
-    MODELSCOPE = "modelscope"
-    XIAOMIMIMO = "xiaomimimo"
-    MOONSHOTAI = "moonshotai"
-    OPENROUTER = "openrouter"
-    GROQ = "groq"
-    SILICONFLOW = "siliconflow"
-    NVIDIA = "nvidia"
-    SENSENOVA = "sensenova"
     OLLAMA = "ollama"
+
 
 # Default models and API key env vars for each provider
 AI_PROVIDER_DEFAULTS = {
+    AIProvider.ANTHROPIC: {
+        "model": "claude-3-5-sonnet-20241022",
+        "api_key_env": "ANTHROPIC_API_KEY",
+    },
+    AIProvider.OPENAI: {
+        "model": "gpt-4",
+        "api_key_env": "OPENAI_API_KEY",
+    },
+    AIProvider.AZURE: {
+        "model": "gpt-4",
+        "api_key_env": "AZURE_OPENAI_API_KEY",
+    },
     AIProvider.ALI: {
-        "model": "qwen3.5-plus-2026-02-15",
+        "model": "qwen-plus",
         "api_key_env": "DASHSCOPE_API_KEY",
     },
-    AIProvider.OPENROUTER: {
-        "model": "tencent/hy3-preview:free",
-        "api_key_env": "OPENROUTER_API_KEY",
+    AIProvider.GEMINI: {
+        "model": "gemini-1.5-flash",
+        "api_key_env": "GOOGLE_API_KEY",
     },
-    AIProvider.GROQ: {
-        "model": "llama-3.1-8b-instant",
-        "api_key_env": "GROQ_API_KEY",
+    AIProvider.DOUBAO: {
+        "model": "doubao-pro-32k",
+        "api_key_env": "DOUBAO_API_KEY",
+    },
+    AIProvider.MINIMAX: {
+        "model": "MiniMax-Text-01",
+        "api_key_env": "MINIMAX_API_KEY",
     },
     AIProvider.DEEPSEEK: {
         "model": "deepseek-chat",
         "api_key_env": "DEEPSEEK_API_KEY",
     },
-    AIProvider.GEMINI: {
-        "model": "gemini-3-flash-preview",
-        "api_key_env": "GOOGLE_API_KEY",
-    },
-    AIProvider.SILICONFLOW: {
-        "model": "Qwen/Qwen2.5-7B-Instruct",
-        "api_key_env": "SILICONFLOW_API_KEY",
-    },
-    AIProvider.ANTHROPIC: {
-        "model": "claude-3-5-sonnet-20241022",
-        "api_key_env": "ANTHROPIC_API_KEY",
-    },
-    AIProvider.XIAOMIMIMO: {
-        "model": "mimo-v2.5-pro",
-        "api_key_env": "XIAOMIMIMO_API_KEY",
-    },
-    AIProvider.SENSENOVA: {
-        "model": "sensenova-6.7-flash-lite",
-        "api_key_env": "SENSENOVA_API_KEY",
-    },
     AIProvider.OLLAMA: {
         "model": "llama3.1",
         "api_key_env": "",
-    }
+    },
 }
 
 
@@ -111,80 +98,28 @@ class AIConfig(BaseModel):
     """AI client configuration."""
 
     provider: AIProvider
-    provider_chain: str | None = None
+    provider_chain: Optional[str] = None
     model: str
-    base_url: str | None = None
-    base_url_env: str | None = None
+    base_url: Optional[str] = None
     api_key_env: str
     temperature: float = 0.3
     max_tokens: int = 4096
     throttle_sec: float = 0.0
     analysis_concurrency: int = 1
     enrichment_concurrency: int = 1
-    languages: list[str] = Field(default_factory=lambda: ["en"])
+    languages: List[str] = Field(default_factory=lambda: ["en"])
     # Azure OpenAI specific; required when provider == AZURE
-    azure_endpoint_env: str | None = None
-    api_version: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def override_from_env(cls, data: Any) -> Any:
-        """Allow environment variables to override JSON config."""
-        if isinstance(data, dict):
-            provider_env = os.getenv("HORIZON_AI_PROVIDER")
-            if provider_env:
-                # Handle provider chain syntax: "openrouter,sensenova,gemini"
-                if "," in provider_env:
-                    data["provider_chain"] = provider_env
-                    first_provider_str = provider_env.split(",")[0].strip()
-                    try:
-                        provider = AIProvider(first_provider_str)
-                        data["provider"] = provider
-                        if provider in AI_PROVIDER_DEFAULTS:
-                            defaults = AI_PROVIDER_DEFAULTS[provider]
-                            if not os.getenv("HORIZON_AI_MODEL") and "model" not in data:
-                                data["model"] = defaults["model"]
-                            if not os.getenv("HORIZON_AI_API_KEY_ENV") and "api_key_env" not in data:
-                                data["api_key_env"] = defaults["api_key_env"]
-                    except ValueError:
-                        data["provider"] = first_provider_str
-                else:
-                    try:
-                        provider = AIProvider(provider_env)
-                        data["provider"] = provider
-
-                        # Apply smart defaults for the chosen provider if not explicitly overridden
-                        if provider in AI_PROVIDER_DEFAULTS:
-                            defaults = AI_PROVIDER_DEFAULTS[provider]
-
-                            # Only apply default model if not provided in env OR current data
-                            if not os.getenv("HORIZON_AI_MODEL"):
-                                data["model"] = defaults["model"]
-
-                            # Only apply default key env if not provided in env OR current data
-                            if not os.getenv("HORIZON_AI_API_KEY_ENV"):
-                                data["api_key_env"] = defaults["api_key_env"]
-                    except ValueError:
-                        # If invalid provider string, fallback to original logic or ignore
-                        data["provider"] = provider_env
-
-            # Explicit overrides still take ultimate precedence
-            model_env = os.getenv("HORIZON_AI_MODEL")
-            if model_env:
-                data["model"] = model_env
-            api_key_env = os.getenv("HORIZON_AI_API_KEY_ENV")
-            if api_key_env:
-                data["api_key_env"] = api_key_env
-        return data
+    azure_endpoint_env: Optional[str] = None
+    api_version: Optional[str] = None
 
 
 class GitHubSourceConfig(BaseModel):
     """GitHub source configuration."""
 
     type: str  # "user_events", "repo_releases", etc.
-    username: str | None = None
-    owner: str | None = None
-    repo: str | None = None
+    username: Optional[str] = None
+    owner: Optional[str] = None
+    repo: Optional[str] = None
     enabled: bool = True
 
 
@@ -202,7 +137,7 @@ class RSSSourceConfig(BaseModel):
     name: str
     url: HttpUrl
     enabled: bool = True
-    category: str | None = None
+    category: Optional[str] = None
 
 
 class RedditSubredditConfig(BaseModel):
@@ -231,13 +166,9 @@ class RedditConfig(BaseModel):
     """Reddit source configuration."""
 
     enabled: bool = True
-    subreddits: list[RedditSubredditConfig] = Field(default_factory=list)
-    users: list[RedditUserConfig] = Field(default_factory=list)
+    subreddits: List[RedditSubredditConfig] = Field(default_factory=list)
+    users: List[RedditUserConfig] = Field(default_factory=list)
     fetch_comments: int = 5  # top comments per post, 0 to disable
-    # OAuth2 credentials (optional but strongly recommended for CI environments)
-    client_id_env: str = "REDDIT_CLIENT_ID"
-    client_secret_env: str = "REDDIT_CLIENT_SECRET"
-    user_agent: str = ""
 
 
 class TelegramChannelConfig(BaseModel):
@@ -252,25 +183,31 @@ class TelegramConfig(BaseModel):
     """Telegram source configuration."""
 
     enabled: bool = True
-    channels: list[TelegramChannelConfig] = Field(default_factory=list)
+    channels: List[TelegramChannelConfig] = Field(default_factory=list)
 
 
 class TwitterConfig(BaseModel):
-    """Twitter source configuration."""
+    """Twitter source configuration.
+
+    Two modes are supported:
+    - "apify": Use Apify scweet actor (requires APIFY_TOKEN, more reliable)
+    - "playwright": Use Playwright + browser cookies (free, no token needed)
+    """
 
     enabled: bool = True
-    users: list[str] = Field(default_factory=list)
+    mode: str = "apify"  # "apify" or "playwright"
+    users: List[str] = Field(default_factory=list)
     fetch_limit: int = 10
     fetch_reply_text: bool = False
     max_replies_per_tweet: int = 3
     max_tweets_to_expand: int = 10
     reply_min_likes: int = 0
-    # Playwright + Cookie settings (replaces Apify)
-    cookie_dir: str = "data"
-    cookie_file_pattern: str = "x_cookies_*.json"
-    # Deprecated Apify settings (kept for backward compat, ignored by new scraper)
+    # Apify settings (used when mode == "apify")
     apify_token_env: str = "APIFY_TOKEN"
     actor_id: str = "altimis~scweet"
+    # Playwright settings (used when mode == "playwright")
+    cookie_dir: str = "data"
+    cookie_file_pattern: str = "x_cookies_*.json"
 
 
 class OpenBBWatchlist(BaseModel):
@@ -281,11 +218,11 @@ class OpenBBWatchlist(BaseModel):
     """
 
     name: str
-    symbols: list[str] = Field(default_factory=list)
+    symbols: List[str] = Field(default_factory=list)
     enabled: bool = True
     provider: str = "yfinance"
     fetch_limit: int = 20
-    category: str | None = None
+    category: Optional[str] = None
 
 
 class OpenBBConfig(BaseModel):
@@ -301,7 +238,7 @@ class OpenBBConfig(BaseModel):
     """
 
     enabled: bool = True
-    watchlists: list[OpenBBWatchlist] = Field(default_factory=list)
+    watchlists: List[OpenBBWatchlist] = Field(default_factory=list)
     fetch_filings: bool = False
     filings_provider: str = "sec"
 
@@ -319,10 +256,10 @@ class OSSInsightConfig(BaseModel):
 
     enabled: bool = False
     period: str = "past_24_hours"  # past_24_hours, past_28_days
-    languages: list[str] = Field(
+    languages: List[str] = Field(
         default_factory=lambda: ["All", "Python", "TypeScript"]
     )
-    keywords: list[str] = Field(default_factory=list)
+    keywords: List[str] = Field(default_factory=list)
     min_stars: int = 5
     max_items: int = 30
 
@@ -330,26 +267,26 @@ class OSSInsightConfig(BaseModel):
 class SourcesConfig(BaseModel):
     """All sources configuration."""
 
-    github: list[GitHubSourceConfig] = Field(default_factory=list)
+    github: List[GitHubSourceConfig] = Field(default_factory=list)
     hackernews: HackerNewsConfig = Field(default_factory=HackerNewsConfig)
-    rss: list[RSSSourceConfig] = Field(default_factory=list)
+    rss: List[RSSSourceConfig] = Field(default_factory=list)
     reddit: RedditConfig = Field(default_factory=RedditConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
-    twitter: TwitterConfig | None = None
-    openbb: OpenBBConfig | None = None
+    twitter: Optional[TwitterConfig] = None
+    openbb: Optional[OpenBBConfig] = None
     ossinsight: OSSInsightConfig = Field(default_factory=OSSInsightConfig)
 
 
 class WebhookConfig(BaseModel):
     """Webhook notification configuration."""
 
-    url_env: str | None = (
+    url_env: Optional[str] = (
         None  # Environment variable name containing the webhook URL
     )
-    request_body: str | dict | list | None = (
+    request_body: Optional[Union[str, dict, list]] = (
         None  # POST body: real JSON object or string with #{key} placeholders; if empty, will use GET
     )
-    headers: str | None = None  # Custom headers, "Key: Value" per line
+    headers: Optional[str] = None  # Custom headers, "Key: Value" per line
     delivery: str = "summary"  # summary, or summary_and_items
     overview_position: str = "first"  # For summary_and_items: first, or last
     platform: str = "generic"  # generic, feishu, lark, dingtalk, slack, discord
@@ -357,7 +294,7 @@ class WebhookConfig(BaseModel):
     fallback_layout: str = (
         "markdown"  # Layout to use when the requested layout is unsupported
     )
-    languages: list[str] | None = (
+    languages: Optional[List[str]] = (
         None  # Optional language filter for webhook delivery; defaults to all AI languages
     )
     enabled: bool = False
@@ -415,7 +352,7 @@ class EmailConfig(BaseModel):
     imap_enabled: bool = True
     smtp_server: str
     smtp_port: int = 465
-    smtp_username: str | None = None
+    smtp_username: Optional[str] = None
     email_address: str
     password_env: str = "EMAIL_PASSWORD"
     sender_name: str = "Horizon Daily"
@@ -424,11 +361,23 @@ class EmailConfig(BaseModel):
     enabled: bool = False
 
 
+class CategoryGroupConfig(BaseModel):
+    """A quota group containing one or more source categories."""
+
+    name: Optional[str] = None
+    limit: int = Field(gt=0)
+    categories: List[str] = Field(min_length=1)
+
+
 class FilteringConfig(BaseModel):
     """Content filtering configuration."""
 
     ai_score_threshold: float = 7.0
     time_window_hours: int = 24
+    max_items: Optional[int] = Field(default=None, gt=0)
+    category_groups: Dict[str, CategoryGroupConfig] = Field(default_factory=dict)
+    default_group: str = "other"
+    default_group_limit: Optional[int] = Field(default=None, gt=0)
 
 
 class Config(BaseModel):
@@ -438,5 +387,5 @@ class Config(BaseModel):
     ai: AIConfig
     sources: SourcesConfig
     filtering: FilteringConfig
-    email: EmailConfig | None = None
-    webhook: WebhookConfig | None = None
+    email: Optional[EmailConfig] = None
+    webhook: Optional[WebhookConfig] = None
