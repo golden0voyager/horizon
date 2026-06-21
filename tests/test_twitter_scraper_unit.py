@@ -475,6 +475,16 @@ class _FakePage:
         # Captured ``page.reload(**kw)`` invocations for the error-page
         # recovery branch.
         self.reload_calls: list[dict[str, Any]] = []
+        # When non-empty, ``goto`` raises ``Exception(self.goto_exception_message)``
+        # after appending to ``goto_calls`` — used by tests that drive
+        # production's ``except Exception as exc: ... if "Timeout" ...`` retry
+        # branch inside ``_scrape_user``.
+        self.goto_exception_message: str = ""
+        # When True, ``evaluate`` returns True for the ``scrollHeight`` JS
+        # query (instead of the default False). Production's polling loop
+        # checks ``if at_bottom and (time - start_time) > 20: break``; tests
+        # that want to drive this break set ``scroll_height_break = True``.
+        self.scroll_height_break: bool = False
         self.mouse = _FakeMouse()
 
     def on(self, event: str, handler: Any) -> None:
@@ -482,6 +492,13 @@ class _FakePage:
 
     async def goto(self, url: str, **kw: Any) -> None:
         self.goto_calls.append(url)
+        if self.goto_exception_message:
+            # Tests that drive the page-load retry loop inside ``_scrape_user``
+            # set ``goto_exception_message`` to either "Timeout ..." (drives
+            # the ``if "Timeout" in str(exc): logger.debug + if attempt==2:
+            # break`` path) or any non-Timeout string (drives the ``else: if
+            # attempt==2: raise`` outer-except ``return None`` path).
+            raise Exception(self.goto_exception_message)
 
     async def evaluate(self, js: str) -> Any:
         self.evaluate_calls.append(js)
@@ -497,7 +514,11 @@ class _FakePage:
         # login-gate test drive the loop-exit via its own per-test
         # ``_LoopLoginGate`` clock.
         if "scrollHeight" in js:
-            return False
+            # Default returns False so the dispatch tests' ``if at_bottom and
+            # time > 20: break`` branch stays inert. Tests that want to
+            # drive the at-bottom break set ``scroll_height_break = True``
+            # before invoking ``_scrape_user``.
+            return self.scroll_height_break
         if "document.body" in js:
             # Used for the login-gate detection (BEFORE the while loop) AND
             # for the error-page reload detection (inside iter body). The
@@ -1150,3 +1171,133 @@ def test_scrape_user_returns_empty_when_all_outside_window(
     # NOTE: not None — production returns ``[]`` here, distinguishing from
     # the post-loop ``return None`` branch (the no-GraphQL path).
     assert out is not None
+
+
+def test_scrape_user_handles_page_goto_timeout_with_retry_loop(
+    _patch_scrape_clocks: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production path: ``page.goto`` raises ``Exception("Timeout reached ...")``
+    three times. Each non-first attempt hits
+    ``if attempt > 0: await asyncio.sleep(random.uniform(5, 10))`` (line
+    281), then ``except Exception as exc:`` (289) captures the Timeout via
+    ``if "Timeout" in str(exc):`` (290), logs
+    ``logger.debug("Page load slow (attempt %d/3)", attempt + 1)`` (291),
+    and finally ``if attempt == 2: break`` (292-293) fires on attempt 2.
+
+    After the for-attempt block, production proceeds to ``await asyncio.sleep(5)``,
+    then enters the polling loop. The per-test ``_LoopGotoTimeout`` advances
+    ``time()`` at 30 s/call so the polling loop's ``<60`` bound trips in 2
+    iterations. ``graphql_tweets`` was never populated, so the post-loop
+    ``if not graphql_tweets: ... return None`` branch fires.
+    """
+    page = _FakePage()
+    page.evaluate_return = ""
+    page.goto_exception_message = "Timeout reached after 25s"
+    ctx = _FakeContext(page)
+    cfg = TwitterConfig()
+    scraper = TwitterScraper(cfg)
+    since = datetime(2026, 1, 1, tzinfo=UTC)
+
+    _n = [0]
+
+    class _LoopGotoTimeout:
+        def time(self) -> float:
+            _n[0] += 1
+            return (_n[0] - 1) * 30.0
+
+    monkeypatch.setattr(
+        "src.scrapers.twitter.asyncio.get_event_loop",
+        lambda: _LoopGotoTimeout(),
+    )
+
+    out = asyncio.run(scraper._scrape_user(ctx, "alice", since))
+
+    assert out is None
+    assert page.goto_calls == [
+        "https://x.com/alice",
+        "https://x.com/alice",
+        "https://x.com/alice",
+    ]
+
+
+def test_scrape_user_returns_none_when_page_goto_raises_unrecoverable_error_after_3_attempts(
+    _patch_scrape_clocks: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production path: ``page.goto`` raises a non-Timeout exception three
+    times. Each non-first attempt triggers the line 281 retry sleep, then
+    ``except Exception as exc:`` (289) → ``else:`` branch (294) because
+    ``"Timeout" not in str(exc)``. On ``attempt == 2``,
+    ``raise`` (296) bubbles out of the for-attempt block and is caught by
+    the outer ``except Exception as exc:`` (355) →
+    ``logger.warning("Failed to scrape @%s: %s", username, exc)`` (356)
+    → ``return None`` (357). The ``finally: await page.close()`` block
+    still runs.
+    """
+    page = _FakePage()
+    page.evaluate_return = ""
+    page.goto_exception_message = "DNS resolution failed"
+    ctx = _FakeContext(page)
+    cfg = TwitterConfig()
+    scraper = TwitterScraper(cfg)
+    since = datetime(2026, 1, 1, tzinfo=UTC)
+
+    _n = [0]
+
+    class _LoopGotoRaise:
+        def time(self) -> float:
+            _n[0] += 1
+            return (_n[0] - 1) * 30.0
+
+    monkeypatch.setattr(
+        "src.scrapers.twitter.asyncio.get_event_loop",
+        lambda: _LoopGotoRaise(),
+    )
+
+    out = asyncio.run(scraper._scrape_user(ctx, "alice", since))
+
+    assert out is None
+    assert page.goto_calls == [
+        "https://x.com/alice",
+        "https://x.com/alice",
+        "https://x.com/alice",
+    ]
+
+
+def test_scrape_user_breaks_polling_loop_when_at_bottom_reached(
+    _patch_scrape_clocks: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production path: ``at_bottom=True AND (time - start_time) > 20`` breaks
+    out of the polling loop early.
+
+    Sets ``_FakePage.scroll_height_break = True`` so the ``scrollHeight`` JS
+    evaluate returns True. The per-test ``_LoopAtBottom.time()`` advances
+    the clock so iter 1's ``if at_bottom and ... > 20: break`` (line 348)
+    fires. ``graphql_tweets`` was never populated, so the post-loop
+    ``if not graphql_tweets: ... return None`` branch fires.
+    """
+    page = _FakePage()
+    page.evaluate_return = ""
+    page.scroll_height_break = True
+    ctx = _FakeContext(page)
+    cfg = TwitterConfig()
+    scraper = TwitterScraper(cfg)
+    since = datetime(2026, 1, 1, tzinfo=UTC)
+
+    _n = [0]
+
+    class _LoopAtBottom:
+        def time(self) -> float:
+            _n[0] += 1
+            return (_n[0] - 1) * 30.0
+
+    monkeypatch.setattr(
+        "src.scrapers.twitter.asyncio.get_event_loop",
+        lambda: _LoopAtBottom(),
+    )
+
+    out = asyncio.run(scraper._scrape_user(ctx, "alice", since))
+
+    assert out is None
