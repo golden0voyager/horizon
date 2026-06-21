@@ -60,6 +60,7 @@ def _build_item(
     ai_score: float | None = None,
     ai_summary: str | None = None,
     ai_tags: list[str] | None = None,
+    fetched_at: datetime | None = None,
 ) -> ContentItem:
     return ContentItem(
         id=f"{source}:x:{url}",
@@ -68,6 +69,7 @@ def _build_item(
         url=url,
         content=content,
         published_at=datetime(2026, 1, 1, tzinfo=UTC),
+        fetched_at=fetched_at or datetime(2026, 1, 1, tzinfo=UTC),
         ai_score=ai_score,
         ai_summary=ai_summary,
         ai_tags=ai_tags or [],
