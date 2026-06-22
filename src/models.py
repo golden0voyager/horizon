@@ -1,12 +1,12 @@
 """Core data models for Horizon."""
 
 from datetime import datetime, timezone
-from enum import Enum
+from enum import StrEnum
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, HttpUrl, Field, field_validator
 
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     """Supported information source types."""
 
     GITHUB = "github"
@@ -39,7 +39,7 @@ class ContentItem(BaseModel):
     ai_tags: List[str] = Field(default_factory=list)
 
 
-class AIProvider(str, Enum):
+class AIProvider(StrEnum):
     """Supported AI providers."""
 
     ANTHROPIC = "anthropic"
@@ -50,6 +50,14 @@ class AIProvider(str, Enum):
     DOUBAO = "doubao"
     MINIMAX = "minimax"
     DEEPSEEK = "deepseek"
+    MODELSCOPE = "modelscope"
+    XIAOMIMIMO = "xiaomimimo"
+    MOONSHOTAI = "moonshotai"
+    OPENROUTER = "openrouter"
+    GROQ = "groq"
+    SILICONFLOW = "siliconflow"
+    NVIDIA = "nvidia"
+    SENSENOVA = "sensenova"
     OLLAMA = "ollama"
 
 
@@ -72,7 +80,7 @@ AI_PROVIDER_DEFAULTS = {
         "api_key_env": "DASHSCOPE_API_KEY",
     },
     AIProvider.GEMINI: {
-        "model": "gemini-1.5-flash",
+        "model": "gemini-3-flash-preview",
         "api_key_env": "GOOGLE_API_KEY",
     },
     AIProvider.DOUBAO: {
@@ -91,6 +99,38 @@ AI_PROVIDER_DEFAULTS = {
         "model": "llama3.1",
         "api_key_env": "",
     },
+    AIProvider.MODELSCOPE: {
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "api_key_env": "MODELSCOPE_API_KEY",
+    },
+    AIProvider.XIAOMIMIMO: {
+        "model": "mimo-v2.5-pro",
+        "api_key_env": "XIAOMIMIMO_API_KEY",
+    },
+    AIProvider.MOONSHOTAI: {
+        "model": "moonshot-v1-8k",
+        "api_key_env": "MOONSHOTAI_API_KEY",
+    },
+    AIProvider.OPENROUTER: {
+        "model": "openrouter/auto",
+        "api_key_env": "OPENROUTER_API_KEY",
+    },
+    AIProvider.GROQ: {
+        "model": "llama-3.1-8b-instant",
+        "api_key_env": "GROQ_API_KEY",
+    },
+    AIProvider.SILICONFLOW: {
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "api_key_env": "SILICONFLOW_API_KEY",
+    },
+    AIProvider.NVIDIA: {
+        "model": "meta/llama-3.1-8b-instruct",
+        "api_key_env": "NVIDIA_API_KEY",
+    },
+    AIProvider.SENSENOVA: {
+        "model": "sensenova-6.7-flash-lite",
+        "api_key_env": "SENSENOVA_API_KEY",
+    },
 }
 
 
@@ -101,6 +141,7 @@ class AIConfig(BaseModel):
     provider_chain: Optional[str] = None
     model: str
     base_url: Optional[str] = None
+    base_url_env: Optional[str] = None
     api_key_env: str
     temperature: float = 0.3
     max_tokens: int = 4096

@@ -1,6 +1,7 @@
 """Main orchestrator coordinating the entire workflow."""
 
 import asyncio
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,15 @@ from .ai.analyzer import ContentAnalyzer
 from .ai.summarizer import DailySummarizer
 from .ai.enricher import ContentEnricher
 from .ai.tokens import get_usage_snapshot
+
+
+def _resolve_proxy() -> str:
+    """Resolve proxy from common env vars."""
+    for key in ("PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        val = os.getenv(key, "").strip()
+        if val:
+            return val
+    return ""
 
 
 @dataclass
@@ -253,7 +263,11 @@ class HorizonOrchestrator:
         Returns:
             List[ContentItem]: All fetched items
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        client_kwargs: dict = {"timeout": 30.0}
+        proxy = _resolve_proxy()
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as client:
             tasks = []
 
             # GitHub sources
@@ -619,7 +633,11 @@ class HorizonOrchestrator:
             f"💬 Fetching reply text for {len(twitter_items)} Twitter items..."
         )
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        client_kwargs: dict = {"timeout": 30.0}
+        proxy = _resolve_proxy()
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as client:
             if tw_cfg.mode == "playwright":
                 self.console.print(
                     "   [yellow]Reply expansion not yet supported in Playwright mode.[/yellow]"

@@ -77,6 +77,21 @@ def _looks_like_api_key_value(value: str) -> bool:
     return not bool(_ENV_VAR_RE.fullmatch(value))
 
 
+def get_base_url(config: AIConfig, default: str | None = None) -> str | None:
+    """Resolve base URL from env, config, or default."""
+    if config.base_url_env:
+        env_url = os.getenv(config.base_url_env)
+        if env_url:
+            return env_url
+    if config.base_url:
+        return config.base_url
+    provider_env_var = f"{config.provider.name.upper()}_BASE_URL"
+    provider_env_url = os.getenv(provider_env_var)
+    if provider_env_url:
+        return provider_env_url
+    return default
+
+
 class AIClient(ABC):
     """Abstract base class for AI clients."""
 
@@ -172,6 +187,14 @@ class OpenAIClient(AIClient):
         "doubao": "https://ark.cn-beijing.volces.com/api/v3",
         "minimax": "https://api.minimax.io/v1",
         "ollama": "http://localhost:11434/v1",
+        "modelscope": "https://api-inference.modelscope.cn/v1",
+        "xiaomimimo": "https://mimo.xiaomi.com/api/v1",
+        "moonshotai": "https://api.moonshot.cn/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
+        "groq": "https://api.groq.com/openai/v1",
+        "siliconflow": "https://api.siliconflow.cn/v1",
+        "nvidia": "https://integrate.api.nvidia.com/v1",
+        "sensenova": "https://token.sensenova.cn/v1",
     }
 
     # Providers that don't support response_format
@@ -497,6 +520,14 @@ def _create_single_client(config: AIConfig) -> AIClient:
         AIProvider.MINIMAX,
         AIProvider.DEEPSEEK,
         AIProvider.OLLAMA,
+        AIProvider.MODELSCOPE,
+        AIProvider.XIAOMIMIMO,
+        AIProvider.MOONSHOTAI,
+        AIProvider.OPENROUTER,
+        AIProvider.GROQ,
+        AIProvider.SILICONFLOW,
+        AIProvider.NVIDIA,
+        AIProvider.SENSENOVA,
     }:
         return OpenAIClient(config)
     else:
