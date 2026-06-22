@@ -23,7 +23,7 @@ import asyncio
 
 import pytest
 
-from src.ai.client import ChainedAIClient
+from src.ai.client import ChainedAIClient, _create_chained_client
 from src.models import AIConfig, AIProvider
 
 
@@ -221,6 +221,39 @@ def test_chained_client_lazy_creates_via_factory():
 
     assert result == "lazy ok"
     assert factory_calls == [AIProvider.OPENAI.value]
+
+
+# ---------------------------------------------------------------------------
+# _create_chained_client
+# ---------------------------------------------------------------------------
+
+
+def test_create_chained_client_parses_chain():
+    """_create_chained_client correctly parses provider chain string."""
+    config = AIConfig(
+        provider=AIProvider.OPENROUTER,
+        model="m1",
+        api_key_env="K1",
+        provider_chain="openrouter,sensenova",
+    )
+    chained = _create_chained_client(config)
+    assert len(chained.configs) == 2
+    assert chained.configs[0].provider == AIProvider.OPENROUTER
+    assert chained.configs[1].provider == AIProvider.SENSENOVA
+    assert chained.configs[1].model == "sensenova-6.7-flash-lite"
+    assert chained.configs[1].api_key_env == "SENSENOVA_API_KEY"
+
+
+def test_create_chained_client_rejects_unknown_provider():
+    """_create_chained_client rejects unknown providers in chain."""
+    config = AIConfig(
+        provider=AIProvider.OPENROUTER,
+        model="m1",
+        api_key_env="K1",
+        provider_chain="openrouter,unknownprovider",
+    )
+    with pytest.raises(ValueError, match="Unsupported AI provider in chain"):
+        _create_chained_client(config)
 
 
 def test_chained_client_factory_invoked_once_per_config():

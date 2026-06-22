@@ -1,11 +1,12 @@
 """Tests for ChainedAIClient fallback logic."""
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 
 from src.ai.client import ChainedAIClient, _create_chained_client
-from src.models import AIConfig, AIProvider
+from src.models import AIConfig, AIProvider, ContentItem, SourceType
 
 
 class _DummyClient:
@@ -48,8 +49,8 @@ def _make_config(provider: AIProvider, model: str = "m", api_key_env: str = "K")
 
 def test_success_on_first_provider():
     """When first provider succeeds, no fallback occurs."""
-    cfg1 = _make_config(AIProvider.OPENROUTER)
-    cfg2 = _make_config(AIProvider.SENSENOVA)
+    cfg1 = _make_config(AIProvider.OPENAI)
+    cfg2 = _make_config(AIProvider.OLLAMA)
     client1 = _DummyClient(result="ok")
     client2 = _DummyClient(result="also ok")
 
@@ -63,8 +64,8 @@ def test_success_on_first_provider():
 
 def test_fallback_on_empty_response():
     """When first provider returns empty/whitespace, fallback to second."""
-    cfg1 = _make_config(AIProvider.OPENROUTER)
-    cfg2 = _make_config(AIProvider.SENSENOVA)
+    cfg1 = _make_config(AIProvider.OPENAI)
+    cfg2 = _make_config(AIProvider.OLLAMA)
     client1 = _DummyClient(result="   ")
     client2 = _DummyClient(result="fallback ok")
 
@@ -78,8 +79,8 @@ def test_fallback_on_empty_response():
 
 def test_fallback_on_rate_limit():
     """When first provider hits 429, fallback to second."""
-    cfg1 = _make_config(AIProvider.OPENROUTER)
-    cfg2 = _make_config(AIProvider.SENSENOVA)
+    cfg1 = _make_config(AIProvider.OPENAI)
+    cfg2 = _make_config(AIProvider.OLLAMA)
     client1 = _DummyClient(exc=Exception("429 rate limit exceeded"))
     client2 = _DummyClient(result="fallback ok")
 
@@ -93,7 +94,7 @@ def test_fallback_on_rate_limit():
 
 def test_fallback_on_quota_exceeded():
     """When first provider quota exhausted, fallback to second."""
-    cfg1 = _make_config(AIProvider.OPENROUTER)
+    cfg1 = _make_config(AIProvider.OPENAI)
     cfg2 = _make_config(AIProvider.GEMINI)
     client1 = _DummyClient(exc=Exception("403 quota exceeded"))
     client2 = _DummyClient(result="fallback ok")
@@ -106,8 +107,8 @@ def test_fallback_on_quota_exceeded():
 
 def test_all_providers_fail():
     """When all providers fail, raise RuntimeError."""
-    cfg1 = _make_config(AIProvider.OPENROUTER)
-    cfg2 = _make_config(AIProvider.SENSENOVA)
+    cfg1 = _make_config(AIProvider.OPENAI)
+    cfg2 = _make_config(AIProvider.OLLAMA)
     client1 = _DummyClient(exc=Exception("429 rate limit"))
     client2 = _DummyClient(exc=Exception("503 service unavailable"))
 
@@ -118,8 +119,8 @@ def test_all_providers_fail():
 
 def test_no_fallback_on_unexpected_error():
     """Non-retryable errors should not trigger fallback."""
-    cfg1 = _make_config(AIProvider.OPENROUTER)
-    cfg2 = _make_config(AIProvider.SENSENOVA)
+    cfg1 = _make_config(AIProvider.OPENAI)
+    cfg2 = _make_config(AIProvider.OLLAMA)
     client1 = _DummyClient(exc=ValueError("Invalid JSON schema"))
     client2 = _DummyClient(result="fallback ok")
 
@@ -144,8 +145,8 @@ def test_should_fallback_detects_retryable_errors():
 
 def test_lazy_initialization():
     """Downstream clients are not instantiated when the first provider succeeds."""
-    cfg1 = _make_config(AIProvider.OPENROUTER)
-    cfg2 = _make_config(AIProvider.SENSENOVA)
+    cfg1 = _make_config(AIProvider.OPENAI)
+    cfg2 = _make_config(AIProvider.OLLAMA)
     client1 = _DummyClient(result="ok")
     client2 = _DummyClient(result="also ok")
 
@@ -155,32 +156,32 @@ def test_lazy_initialization():
 
     assert result == "ok"
     assert len(factory.calls) == 1
-    assert factory.calls[0].provider == AIProvider.OPENROUTER
+    assert factory.calls[0].provider == AIProvider.OPENAI
 
 
 def test_create_chained_client_parses_chain():
     """_create_chained_client correctly parses provider chain string."""
     config = AIConfig(
-        provider=AIProvider.OPENROUTER,
+        provider=AIProvider.OPENAI,
         model="m1",
         api_key_env="K1",
-        provider_chain="openrouter,sensenova",
+        provider_chain="openai,ollama",
     )
     chained = _create_chained_client(config)
     assert len(chained.configs) == 2
-    assert chained.configs[0].provider == AIProvider.OPENROUTER
-    assert chained.configs[1].provider == AIProvider.SENSENOVA
-    assert chained.configs[1].model == "sensenova-6.7-flash-lite"
-    assert chained.configs[1].api_key_env == "SENSENOVA_API_KEY"
+    assert chained.configs[0].provider == AIProvider.OPENAI
+    assert chained.configs[1].provider == AIProvider.OLLAMA
+    assert chained.configs[1].model == "llama3.1"
+    assert chained.configs[1].api_key_env == ""
 
 
 def test_create_chained_client_rejects_unknown_provider():
     """_create_chained_client rejects unknown providers in chain."""
     config = AIConfig(
-        provider=AIProvider.OPENROUTER,
+        provider=AIProvider.OPENAI,
         model="m1",
         api_key_env="K1",
-        provider_chain="openrouter,unknownprovider",
+        provider_chain="openai,unknownprovider",
     )
     with pytest.raises(ValueError, match="Unsupported AI provider in chain"):
         _create_chained_client(config)

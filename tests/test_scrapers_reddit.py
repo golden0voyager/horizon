@@ -15,8 +15,10 @@ import asyncio
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
+import httpx
+
 from src.models import RedditConfig, RedditSubredditConfig, RedditUserConfig
-from src.scrapers.reddit import RedditScraper
+from src.scrapers.reddit import REDDIT_HEADERS, RedditScraper
 
 
 def _client_with_routes(routes):
@@ -166,6 +168,76 @@ def test_fetch_subreddit_falls_back_to_rss_on_403():
     result = asyncio.run(scraper.fetch(_since()))
     # Feedparser v6 is lenient — even invalid RSS returns either real entries or empty.
     assert isinstance(result, list)
+
+
+def test_fetch_uses_browser_like_headers():
+    """Verify browser-like User-Agent, Accept-Language, and Referer headers."""
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": {"children": []}})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    sub = RedditSubredditConfig(subreddit="test", sort="hot", fetch_limit=1, min_score=0, enabled=True)
+    config = RedditConfig(enabled=True, subreddits=[sub], users=[], fetch_comments=0)
+    scraper = RedditScraper(config, client)
+
+    asyncio.run(scraper.fetch(_since()))
+
+    assert len(requests) == 1
+    assert requests[0].headers["user-agent"] == REDDIT_HEADERS["User-Agent"]
+    assert requests[0].headers["accept-language"] == REDDIT_HEADERS["Accept-Language"]
+    assert requests[0].headers["referer"] == REDDIT_HEADERS["Referer"]
+
+
+def test_fetch_comment_403_degrades_to_post_without_comments():
+    """When comment fetch returns 403, post is returned without comments."""
+
+    def _listing_payload() -> dict:
+        now = datetime.now(UTC)
+        return {
+            "data": {
+                "children": [
+                    {
+                        "kind": "t3",
+                        "data": {
+                            "id": "abc123",
+                            "title": "Test post",
+                            "is_self": True,
+                            "subreddit": "LocalLLaMA",
+                            "permalink": "/r/LocalLLaMA/comments/abc123/test_post/",
+                            "author": "tester",
+                            "created_utc": now.timestamp(),
+                            "score": 42,
+                            "upvote_ratio": 0.97,
+                            "num_comments": 5,
+                            "selftext": "post body",
+                        },
+                    }
+                ]
+            }
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/hot.json"):
+            return httpx.Response(200, json=_listing_payload())
+        if "/comments/" in request.url.path:
+            return httpx.Response(403, text="blocked")
+        raise AssertionError(f"unexpected url: {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport)
+    sub = RedditSubredditConfig(subreddit="LocalLLaMA", sort="hot", fetch_limit=1, min_score=1, enabled=True)
+    config = RedditConfig(enabled=True, subreddits=[sub], users=[], fetch_comments=3)
+    scraper = RedditScraper(config, client)
+
+    items = asyncio.run(scraper.fetch(_since()))
+
+    assert len(items) == 1
+    assert items[0].title == "Test post"
+    assert "Top Comments" not in (items[0].content or "")
 
 
 def test_fetch_user_listing():

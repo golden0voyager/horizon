@@ -12,7 +12,7 @@ Coverage targets:
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone, timedelta
 from types import SimpleNamespace
 
 from src.models import OpenBBConfig, OpenBBWatchlist
@@ -129,8 +129,10 @@ def test_coerce_datetime_from_naive_datetime_adds_utc():
     assert result.tzinfo == UTC
 
 
-def test_coerce_datetime_returns_none_for_invalid_string():
+def test_coerce_datetime_returns_none_for_invalid_input():
     assert OpenBBScraper._coerce_datetime("not-a-date") is None
+    assert OpenBBScraper._coerce_datetime(42) is None
+    assert OpenBBScraper._coerce_datetime(None) is None
 
 
 def test_parse_symbols_from_string_csv():
@@ -143,3 +145,82 @@ def test_parse_symbols_dedup():
 
 def test_parse_symbols_empty_when_unsupported_type():
     assert OpenBBScraper._parse_symbols(42) == []
+
+
+def test_coerce_url_handles_bogus():
+    assert OpenBBScraper._coerce_url(None) is None
+    assert OpenBBScraper._coerce_url("  ") is None
+    assert OpenBBScraper._coerce_url("http://x") == "http://x"
+
+
+def test_ensure_utc_other_tz():
+    """Non-UTC timezone is correctly converted to UTC."""
+    other = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone(timedelta(hours=8)))
+    result = OpenBBScraper._ensure_utc(other)
+    assert result.tzinfo == UTC
+    assert result.hour == 4
+
+
+def test_fetch_skips_disabled_watchlist(monkeypatch):
+    """Disabled watchlist within an enabled config is skipped."""
+    fake_obb = SimpleNamespace()
+    fake_obb.news = SimpleNamespace(company=lambda symbol, limit, provider: SimpleNamespace(results=[]))
+    monkeypatch.setattr("src.scrapers.openbb.OpenBBScraper._try_import_obb",
+                        staticmethod(lambda: fake_obb))
+    config = OpenBBConfig(
+        enabled=True,
+        watchlists=[OpenBBWatchlist(name="off", symbols=["AAPL"], enabled=False)],
+    )
+    scraper = OpenBBScraper(config, http_client=None)
+    result = asyncio.run(scraper.fetch(_since()))
+    assert result == []
+
+
+def test_fetch_skips_watchlist_with_no_symbols(monkeypatch):
+    """Watchlist with empty symbols list is skipped."""
+    fake_obb = SimpleNamespace()
+    fake_obb.news = SimpleNamespace(company=lambda symbol, limit, provider: SimpleNamespace(results=[]))
+    monkeypatch.setattr("src.scrapers.openbb.OpenBBScraper._try_import_obb",
+                        staticmethod(lambda: fake_obb))
+    config = OpenBBConfig(
+        enabled=True,
+        watchlists=[OpenBBWatchlist(name="empty", symbols=[])],
+    )
+    scraper = OpenBBScraper(config, http_client=None)
+    result = asyncio.run(scraper.fetch(_since()))
+    assert result == []
+
+
+def test_fetch_watchlist_exception_does_not_block_others(monkeypatch):
+    """An exception in one watchlist doesn't prevent others from returning results."""
+    fake_obb = SimpleNamespace()
+    call_count = 0
+
+    def fake_news_company(symbol, limit, provider):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("upstream 500")
+        return SimpleNamespace(results=[
+            SimpleNamespace(
+                url="https://news/msft", title="MSFT up",
+                date=datetime(2026, 1, 2, tzinfo=UTC), body="", author=None,
+                symbols="MSFT", excerpt=None,
+            )
+        ])
+
+    fake_obb.news = SimpleNamespace(company=fake_news_company)
+    monkeypatch.setattr("src.scrapers.openbb.OpenBBScraper._try_import_obb",
+                        staticmethod(lambda: fake_obb))
+
+    config = OpenBBConfig(
+        enabled=True,
+        watchlists=[
+            OpenBBWatchlist(name="boom", symbols=["AAPL"]),
+            OpenBBWatchlist(name="ok", symbols=["MSFT"]),
+        ],
+    )
+    scraper = OpenBBScraper(config, http_client=None)
+    result = asyncio.run(scraper.fetch(_since()))
+    assert len(result) == 1
+    assert result[0].metadata["watchlist"] == "ok"

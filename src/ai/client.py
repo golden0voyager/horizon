@@ -3,16 +3,17 @@
 import os
 import re
 from abc import ABC, abstractmethod
-from typing import Any
-
+from typing import Any, Dict, List, Optional
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types
-from openai import AsyncAzureOpenAI, AsyncOpenAI
-from rich import print as rich_print
+
 
 from ..models import AIConfig, AIProvider
+from rich import print as rich_print
 from .tokens import record_usage
+
 
 _ENV_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SECRET_PREFIXES = (
@@ -35,7 +36,7 @@ _DEFAULT_API_KEY_ENVS = {
 }
 
 
-def _resolve_api_key(config: AIConfig, *, fallback: str | None = None) -> str:
+def _resolve_api_key(config: AIConfig, *, fallback: Optional[str] = None) -> str:
     api_key = os.getenv(config.api_key_env)
     if api_key:
         return api_key
@@ -76,24 +77,6 @@ def _looks_like_api_key_value(value: str) -> bool:
     return not bool(_ENV_VAR_RE.fullmatch(value))
 
 
-def get_base_url(config: AIConfig, default: str | None = None) -> str | None:
-    """Resolve base URL from env, config, or default."""
-    if config.base_url_env:
-        env_url = os.getenv(config.base_url_env)
-        if env_url:
-            return env_url
-    if config.base_url:
-        return config.base_url
-
-    # Fallback to provider-specific base URL from .env if defined
-    provider_env_var = f"{config.provider.name.upper()}_BASE_URL"
-    provider_env_url = os.getenv(provider_env_var)
-    if provider_env_url:
-        return provider_env_url
-
-    return default
-
-
 class AIClient(ABC):
     """Abstract base class for AI clients."""
 
@@ -102,8 +85,8 @@ class AIClient(ABC):
         self,
         system: str,
         user: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         """Generate completion from AI model.
 
@@ -145,8 +128,8 @@ class AnthropicClient(AIClient):
         self,
         system: str,
         user: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         """Generate completion using Claude.
 
@@ -189,14 +172,6 @@ class OpenAIClient(AIClient):
         "doubao": "https://ark.cn-beijing.volces.com/api/v3",
         "minimax": "https://api.minimax.io/v1",
         "ollama": "http://localhost:11434/v1",
-        "modelscope": "https://api-inference.modelscope.cn/v1",
-        "xiaomimimo": "https://mimo.xiaomi.com/api/v1",
-        "moonshotai": "https://api.moonshot.cn/v1",
-        "openrouter": "https://openrouter.ai/api/v1",
-        "groq": "https://api.groq.com/openai/v1",
-        "siliconflow": "https://api.siliconflow.cn/v1",
-        "nvidia": "https://integrate.api.nvidia.com/v1",
-        "sensenova": "https://token.sensenova.cn/v1",
     }
 
     # Providers that don't support response_format
@@ -217,7 +192,7 @@ class OpenAIClient(AIClient):
         api_key = _resolve_api_key(config, fallback=fallback)
 
         kwargs = {"api_key": api_key}
-        base_url = get_base_url(config, self._DEFAULT_BASE_URLS.get(config.provider.value))
+        base_url = config.base_url or self._DEFAULT_BASE_URLS.get(config.provider.value)
         if base_url:
             kwargs["base_url"] = base_url
 
@@ -234,8 +209,8 @@ class OpenAIClient(AIClient):
         self,
         system: str,
         user: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         """Generate completion using OpenAI-compatible API.
 
@@ -366,8 +341,8 @@ class AzureOpenAIClient(AIClient):
         self,
         system: str,
         user: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         """Generate completion using Azure OpenAI.
 
@@ -440,7 +415,7 @@ class AzureOpenAIClient(AIClient):
         )
 
     @staticmethod
-    def _token_fallback_mode(message: str) -> bool | None:
+    def _token_fallback_mode(message: str) -> Optional[bool]:
         lowered = message.lower()
         if "max_completion_tokens" in lowered and "max_tokens" in lowered:
             return True
@@ -471,8 +446,8 @@ class GeminiClient(AIClient):
         self,
         system: str,
         user: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         """Generate completion using Gemini.
 
@@ -522,14 +497,6 @@ def _create_single_client(config: AIConfig) -> AIClient:
         AIProvider.MINIMAX,
         AIProvider.DEEPSEEK,
         AIProvider.OLLAMA,
-        AIProvider.MODELSCOPE,
-        AIProvider.XIAOMIMIMO,
-        AIProvider.MOONSHOTAI,
-        AIProvider.OPENROUTER,
-        AIProvider.GROQ,
-        AIProvider.SILICONFLOW,
-        AIProvider.NVIDIA,
-        AIProvider.SENSENOVA,
     }:
         return OpenAIClient(config)
     else:
@@ -549,13 +516,13 @@ class ChainedAIClient(AIClient):
 
     def __init__(
         self,
-        configs: list[AIConfig],
-        clients: list[AIClient] | None = None,
-        client_factory: Any | None = None,
+        configs: List[AIConfig],
+        clients: Optional[List[AIClient]] = None,
+        client_factory: Optional[Any] = None,
     ):
         self.configs = configs
         self._client_factory = client_factory or _create_single_client
-        self._client_cache: dict[int, AIClient] = {}
+        self._client_cache: Dict[int, AIClient] = {}
         # Allow tests to inject pre-built clients directly
         if clients is not None:
             for idx, client in enumerate(clients):
@@ -570,10 +537,10 @@ class ChainedAIClient(AIClient):
         self,
         system: str,
         user: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
-        last_error: Exception | None = None
+        last_error: Optional[Exception] = None
         for i in range(len(self.configs)):
             try:
                 client = self._get_client(i)
@@ -602,7 +569,9 @@ class ChainedAIClient(AIClient):
             return True
         if "502" in msg or "503" in msg or "service unavailable" in msg:
             return True
-        return "empty response" in msg
+        if "empty response" in msg:
+            return True
+        return False
 
 
 def _create_chained_client(config: AIConfig) -> ChainedAIClient:
@@ -613,12 +582,12 @@ def _create_chained_client(config: AIConfig) -> ChainedAIClient:
     if not provider_names:
         raise ValueError("provider_chain is empty")
 
-    chain_configs: list[AIConfig] = []
+    chain_configs: List[AIConfig] = []
     for name in provider_names:
         try:
             provider = AIProvider(name)
         except ValueError:
-            raise ValueError(f"Unsupported AI provider in chain: {name}") from None
+            raise ValueError(f"Unsupported AI provider in chain: {name}")
 
         defaults = AI_PROVIDER_DEFAULTS.get(provider, {})
         cfg = AIConfig(
@@ -626,7 +595,6 @@ def _create_chained_client(config: AIConfig) -> ChainedAIClient:
             model=defaults.get("model", config.model),
             api_key_env=defaults.get("api_key_env", config.api_key_env),
             base_url=config.base_url,
-            base_url_env=config.base_url_env,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             languages=config.languages,

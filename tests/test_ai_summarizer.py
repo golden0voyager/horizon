@@ -226,6 +226,26 @@ def test_generate_webhook_item_zh_prefix():
     assert "标题测试 abc" in out
 
 
+def test_generate_webhook_item_omits_discussion_link_when_same_as_item_url():
+    summarizer = DailySummarizer()
+    item = _make_item("rss:a", title="x", ai_score=8.0, metadata={})
+    item.metadata["discussion_url"] = item.url
+
+    out = summarizer.generate_webhook_item(item, language="en", index=1, total=1)
+
+    assert "Discussion]" not in out
+
+
+def test_generate_webhook_item_uses_localized_discussion_label():
+    summarizer = DailySummarizer()
+    item = _make_item("rss:a", title="x", ai_score=8.0, metadata={})
+    item.metadata["discussion_url"] = "https://www.reddit.com/r/python/comments/abc123/test/"
+
+    out = summarizer.generate_webhook_item(item, language="zh", index=1, total=1)
+
+    assert "[社区讨论](https://www.reddit.com/r/python/comments/abc123/test/)" in out
+
+
 # ---------------------------------------------------------------------------
 # _format_item — source line, background, references, tags
 # ---------------------------------------------------------------------------
